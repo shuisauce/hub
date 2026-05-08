@@ -35,6 +35,8 @@ export type ScheduleSettings = {
   hospitals: Hospital[]
   hourOptions: HourOption[]
   annualGoal: number
+  /** Manually entered "I've earned this much YTD" baseline. */
+  earnedYTD: number
 }
 
 export const DEFAULT_SETTINGS: ScheduleSettings = {
@@ -57,6 +59,7 @@ export const DEFAULT_SETTINGS: ScheduleSettings = {
     { label: 'OC P', hours: 12, oc: true, start: '19:00', end: '07:00' },
   ],
   annualGoal: 285000,
+  earnedYTD: 0,
 }
 
 let cachedSql: ReturnType<typeof neon> | null = null

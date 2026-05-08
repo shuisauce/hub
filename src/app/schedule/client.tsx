@@ -170,6 +170,38 @@ function expectedPace(throughKey: string, goal: number) {
   return goal * frac
 }
 
+// Per-future-shift cumulative pace: { cum: total earned by this shift's date, expected: pace target on that date }
+type PaceInfo = { cum: number; expected: number; status: 'ahead' | 'behind' }
+function buildPaceMap(
+  schedule: Schedule,
+  lookup: Record<string, Hospital>,
+  today: string,
+  earnedYTD: number,
+  annualGoal: number,
+): Map<string, PaceInfo> {
+  const map = new Map<string, PaceInfo>()
+  const todayP = parseKey(today)
+  const currentYear = todayP.y
+  const dates = Object.keys(schedule)
+    .filter((k) => {
+      const p = parseKey(k)
+      return p.y === currentYear && k > today && !isUncountedShift(schedule[k])
+    })
+    .sort()
+
+  let cum = earnedYTD
+  for (const date of dates) {
+    cum += shiftAmount(schedule[date], lookup)
+    const p = parseKey(date)
+    const start = new Date(p.y, 0, 1).getTime()
+    const end = new Date(p.y, 11, 31).getTime()
+    const here = new Date(p.y, p.m, p.d).getTime()
+    const expected = annualGoal * ((here - start) / (end - start))
+    map.set(date, { cum, expected, status: cum >= expected ? 'ahead' : 'behind' })
+  }
+  return map
+}
+
 // ---------- Exports (CSV + .ics download) ----------
 
 function triggerDownload(filename: string, content: string, mime: string) {
@@ -386,44 +418,57 @@ type PaintState = {
 // ---------- PaceStrip ----------
 
 function PaceStrip({
-  schedule, open, onToggle, lookup, annualGoal,
+  schedule, open, onToggle, lookup, annualGoal, earnedYTD,
 }: {
   schedule: Schedule
   open: boolean
   onToggle: () => void
   lookup: Record<string, Hospital>
   annualGoal: number
+  earnedYTD: number
 }) {
   const today = todayKey()
-  const ytd = ytdStats(schedule, today, lookup)
   const expected = expectedPace(today, annualGoal)
-  const yearProj = yearScheduledStats(schedule, parseKey(today).y, lookup).gross
-  const delta = ytd.gross - expected
-  const pct = Math.min(100, (ytd.gross / annualGoal) * 100)
-  const expectedPct = (expected / annualGoal) * 100
+  const futureScheduled = useMemo(() => {
+    let sum = 0
+    const ty = parseKey(today).y
+    for (const k in schedule) {
+      const p = parseKey(k)
+      if (p.y !== ty) continue
+      if (k <= today) continue
+      sum += shiftAmount(schedule[k], lookup)
+    }
+    return sum
+  }, [schedule, lookup, today])
+  const projected = earnedYTD + futureScheduled
+  const delta = earnedYTD - expected
+  const earnedPct = Math.min(100, (earnedYTD / annualGoal) * 100)
+  const projectedPct = Math.min(100, (projected / annualGoal) * 100)
+  const expectedPct = Math.min(100, (expected / annualGoal) * 100)
 
   return (
     <div className="pace-strip" data-open={open} onClick={onToggle}>
       <div className="pace-stat">
-        <span className="lbl">YTD</span>
-        <span className="val mono">{fmtMoneyShort(ytd.gross)}</span>
+        <span className="lbl">Earned</span>
+        <span className="val mono">{fmtMoneyShort(earnedYTD)}</span>
       </div>
       <div className="pace-stat">
         <span className="lbl">Goal</span>
         <span className="val mono">{fmtMoneyShort(annualGoal)}</span>
       </div>
       <div className="pace-bar-wrap">
-        <div className="pace-bar">
-          <div className="fill" style={{ width: pct + '%' }} />
-          <div className="marker" style={{ left: expectedPct + '%' }} title={`Pace: ${fmtMoney(expected)}`} />
+        <div className="pace-bar" title={`Earned ${fmtMoney(earnedYTD)} · projected ${fmtMoney(projected)} · pace ${fmtMoney(expected)}`}>
+          <div className="fill-projected" style={{ width: projectedPct + '%' }} />
+          <div className="fill" style={{ width: earnedPct + '%' }} />
+          <div className="marker" style={{ left: expectedPct + '%' }} />
         </div>
         <span className={'pace-delta ' + (delta < 0 ? 'behind' : 'ahead')}>
           {delta < 0 ? '−' : '+'}{fmtMoneyShort(Math.abs(delta))} {delta < 0 ? 'behind' : 'ahead'}
         </span>
       </div>
       <div className="pace-stat">
-        <span className="lbl">Projected</span>
-        <span className="val mono">{fmtMoneyShort(yearProj)}</span>
+        <span className="lbl">Year-end</span>
+        <span className="val mono">{fmtMoneyShort(projected)}</span>
       </div>
       <span className="chev"><Icon name="chev-down" size={16} /></span>
     </div>
@@ -433,64 +478,65 @@ function PaceStrip({
 // ---------- Drawer ----------
 
 function Drawer({
-  open, schedule, lookup, annualGoal, hospitals,
+  open, schedule, lookup, annualGoal, earnedYTD, hospitals,
 }: {
   open: boolean
   schedule: Schedule
   lookup: Record<string, Hospital>
   annualGoal: number
+  earnedYTD: number
   hospitals: Hospital[]
 }) {
   const today = todayKey()
-  const ytd = ytdStats(schedule, today, lookup)
   const expected = expectedPace(today, annualGoal)
-  const delta = ytd.gross - expected
-  const yearProj = yearScheduledStats(schedule, parseKey(today).y, lookup).gross
-  const remaining = Math.max(0, annualGoal - yearProj)
-
-  // Per-hospital YTD
-  const perHosp = new Map<string, { gross: number; hours: number }>()
+  const delta = earnedYTD - expected
   const todayP = parseKey(today)
+
+  // Future scheduled gross (after today, this year only) and per-hospital scheduled hours
+  let futureGross = 0
+  const perHosp = new Map<string, { gross: number; hours: number }>()
   for (const k in schedule) {
     const p = parseKey(k)
     if (p.y !== todayP.y) continue
-    if (p.m > todayP.m || (p.m === todayP.m && p.d > todayP.d)) continue
     const s = schedule[k]
     if (isUncountedShift(s)) continue
+    if (k > today) futureGross += shiftAmount(s, lookup)
     const cur = perHosp.get(s.hosp) ?? { gross: 0, hours: 0 }
     cur.gross += shiftAmount(s, lookup)
     cur.hours += s.h
     perHosp.set(s.hosp, cur)
   }
+  const projected = earnedYTD + futureGross
+  const remaining = Math.max(0, annualGoal - projected)
 
   return (
     <div className="drawer" style={{ maxHeight: open ? 360 : 0 }}>
       <div className="drawer-inner">
         <div className="drawer-card">
-          <div className="lbl">YTD Gross</div>
-          <div className="val mono">{fmtMoney(ytd.gross)}</div>
-          <div className="sub">{ytd.shifts} shifts · {ytd.hours} hrs</div>
+          <div className="lbl">Earned YTD</div>
+          <div className="val mono">{fmtMoney(earnedYTD)}</div>
+          <div className="sub">Pace target today: {fmtMoneyShort(expected)}</div>
           <div className={'delta ' + (delta < 0 ? 'behind' : 'ahead')}>
             {delta < 0 ? '↓ ' : '↑ '}{fmtMoneyShort(Math.abs(delta))} vs pace
           </div>
         </div>
         <div className="drawer-card">
-          <div className="lbl">{todayP.y} Projected</div>
-          <div className="val mono">{fmtMoney(yearProj)}</div>
-          <div className="sub">If you work everything booked</div>
-          <div className={'delta ' + (yearProj >= annualGoal ? 'ahead' : 'behind')}>
-            {yearProj >= annualGoal
-              ? `+${fmtMoneyShort(yearProj - annualGoal)} over goal`
-              : `${fmtMoneyShort(remaining)} to go`}
+          <div className="lbl">{todayP.y} Year-end</div>
+          <div className="val mono">{fmtMoney(projected)}</div>
+          <div className="sub">+ {fmtMoneyShort(futureGross)} from scheduled future shifts</div>
+          <div className={'delta ' + (projected >= annualGoal ? 'ahead' : 'behind')}>
+            {projected >= annualGoal
+              ? `+${fmtMoneyShort(projected - annualGoal)} over goal`
+              : `${fmtMoneyShort(remaining)} still to schedule`}
           </div>
         </div>
-        {hospitals.filter(h => h.enabled !== false).slice(0, 2).map(h => {
+        {hospitals.filter((h) => h.enabled !== false).slice(0, 2).map((h) => {
           const stats = perHosp.get(h.id) ?? { gross: 0, hours: 0 }
           return (
             <div key={h.id} className="drawer-card" style={{ borderLeft: `3px solid ${h.color}` }}>
-              <div className="lbl">{h.name} YTD</div>
+              <div className="lbl">{h.name} (this year)</div>
               <div className="val mono" style={{ color: h.color }}>{fmtMoney(stats.gross)}</div>
-              <div className="sub">{stats.hours} hrs · ${h.rate}/hr · {h.pay}</div>
+              <div className="sub">{stats.hours} hrs scheduled · ${h.rate}/hr · {h.pay}</div>
             </div>
           )
         })}
@@ -603,7 +649,7 @@ function PaintToolbar({
 // ---------- DayCell ----------
 
 function DayCell({
-  y, m, d, k, schedule, isFirstOfMonth, painting, faded, beyondLimit, lookup, today,
+  y, m, d, k, schedule, isFirstOfMonth, painting, faded, beyondLimit, lookup, today, paceInfo,
   onClick, onPaintEnter, onPaintStart,
 }: {
   y: number; m: number; d: number; k: string
@@ -614,6 +660,7 @@ function DayCell({
   beyondLimit: boolean
   lookup: Record<string, Hospital>
   today: string
+  paceInfo?: PaceInfo
   onClick: (k: string, e: ReactMouseEvent) => void
   onPaintEnter: (k: string) => void
   onPaintStart: (k: string, e: ReactMouseEvent) => void
@@ -647,8 +694,16 @@ function DayCell({
         color: h.color,
       }
       : undefined
+    const showDot = !asOverlay && !isOc && s.hosp !== 'OFF' && paceInfo
     return (
       <div key={asOverlay ? 'oc' : 'main'} className={`shift-card ${h.id} ${isOc ? 'oc' : ''}`} style={style}>
+        {showDot && (
+          <span
+            className="pace-dot"
+            data-status={paceInfo!.status}
+            title={`After this shift: ${fmtMoney(paceInfo!.cum)} · pace target ${fmtMoney(paceInfo!.expected)} (${paceInfo!.cum >= paceInfo!.expected ? '+' : '−'}${fmtMoney(Math.abs(paceInfo!.cum - paceInfo!.expected))})`}
+          />
+        )}
         <span className="h">{s.label || `${s.h}h`}</span>
         <span>{h.short}</span>
         <span className="amt mono">{isOc ? 'on-call' : fmtMoneyShort(shiftAmount(s, lookup))}</span>
@@ -746,7 +801,7 @@ function MonthDivider({
 }
 
 function Calendar({
-  schedule, paintHover, months, weekStart, lookup, today, maxKey,
+  schedule, paintHover, months, weekStart, lookup, today, maxKey, paceMap,
   onDayClick, onPaintStart, onPaintEnter, onClearMonth,
 }: {
   schedule: Schedule
@@ -756,6 +811,7 @@ function Calendar({
   lookup: Record<string, Hospital>
   today: string
   maxKey: string
+  paceMap: Map<string, PaceInfo>
   onDayClick: (k: string, e: ReactMouseEvent) => void
   onPaintStart: (k: string, e: ReactMouseEvent) => void
   onPaintEnter: (k: string) => void
@@ -812,6 +868,7 @@ function Calendar({
               beyondLimit={beyondLimit}
               lookup={lookup}
               today={today}
+              paceInfo={paceMap.get(c.key)}
               painting={!!paintHover[c.key]}
               onClick={inactive ? () => {} : onDayClick}
               onPaintStart={inactive ? () => {} : onPaintStart}
@@ -1045,6 +1102,7 @@ function SettingsModal({
 
           <div className="settings-section">
             <h4>Income tracker</h4>
+            <div className="desc">Set what you&rsquo;ve already been paid this year. Future shifts on the calendar add on top of it. The pace dot on each shift shows whether that shift puts you ahead (green) or behind (orange) on its date.</div>
             <div className="settings-row">
               <div className="row-label">
                 <span className="name">Show YTD bar & dashboard</span>
@@ -1053,13 +1111,28 @@ function SettingsModal({
             </div>
             <div className="settings-row">
               <div className="row-label">
+                <span className="name">Earned this year</span>
+                <span className="meta">paid YTD baseline</span>
+              </div>
+              <input
+                className="s-input"
+                type="number"
+                min={0}
+                step={100}
+                value={settings.earnedYTD}
+                onChange={(e) => setSettings({ ...settings, earnedYTD: Number(e.target.value) || 0 })}
+                style={{ width: 120 }}
+              />
+            </div>
+            <div className="settings-row">
+              <div className="row-label">
                 <span className="name">Annual goal</span>
               </div>
               <input
                 className="s-input"
                 type="number"
-                min="0"
-                step="1000"
+                min={0}
+                step={1000}
                 value={settings.annualGoal}
                 onChange={(e) => setSettings({ ...settings, annualGoal: Number(e.target.value) || 0 })}
                 style={{ width: 120 }}
@@ -1245,6 +1318,10 @@ export function ScheduleClient({
   const maxKey = useMemo(() => maxScheduleKey(), [])
   const months = useMemo(() => visibleMonths(), [])
   const lookup = useMemo(() => makeHospLookup(settings.hospitals), [settings.hospitals])
+  const paceMap = useMemo(
+    () => buildPaceMap(schedule, lookup, today, settings.earnedYTD, settings.annualGoal),
+    [schedule, lookup, today, settings.earnedYTD, settings.annualGoal],
+  )
   const scheduleAppRef = useRef<HTMLDivElement | null>(null)
 
   const scrollToToday = useCallback((behavior: ScrollBehavior = 'smooth') => {
@@ -1498,6 +1575,7 @@ export function ScheduleClient({
             onToggle={() => setDrawerOpen((o) => !o)}
             lookup={lookup}
             annualGoal={settings.annualGoal}
+            earnedYTD={settings.earnedYTD}
           />
         )}
         {settings.showIncome !== false && (
@@ -1506,6 +1584,7 @@ export function ScheduleClient({
             schedule={visibleSchedule}
             lookup={lookup}
             annualGoal={settings.annualGoal}
+            earnedYTD={settings.earnedYTD}
             hospitals={settings.hospitals}
           />
         )}
@@ -1526,6 +1605,7 @@ export function ScheduleClient({
           lookup={lookup}
           today={today}
           maxKey={maxKey}
+          paceMap={paceMap}
           onDayClick={onDayClick}
           onPaintStart={onPaintStart}
           onPaintEnter={onPaintEnter}
