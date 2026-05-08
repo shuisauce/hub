@@ -680,7 +680,7 @@ function PaceStrip({
 // ---------- Drawer ----------
 
 function Drawer({
-  open, schedule, lookup, annualGoal, earnedYTD, hoursYTD, w2WeeklyHours,
+  open, schedule, lookup, annualGoal, earnedYTD, hoursYTD, w2WeeklyHours, dayOffRate,
 }: {
   open: boolean
   schedule: Schedule
@@ -689,6 +689,7 @@ function Drawer({
   earnedYTD: number
   hoursYTD: number
   w2WeeklyHours: number
+  dayOffRate: number
 }) {
   const today = todayKey()
   const expected = expectedPace(today, annualGoal)
@@ -719,14 +720,21 @@ function Drawer({
 
   const projected = earnedYTD + futureGross
   const remaining = Math.max(0, annualGoal - projected)
+  const cushion = projected - annualGoal
 
-  // Average shift gross — used for the "shifts to goal" estimate. Falls back
-  // to a 12h shift at the highest enabled rate if there's no history yet.
+  // Average shift gross — used when behind to estimate "shifts to hit goal."
   const avgShiftGross =
     paidShiftCount > 0
       ? paidShiftGross / paidShiftCount
       : (Object.values(lookup).reduce((m, h) => Math.max(m, h.rate), 0) || 233) * 12
-  const shiftsToGoal = remaining > 0 && avgShiftGross > 0 ? Math.ceil(remaining / avgShiftGross) : 0
+
+  // Day-off check — only 8h (sometimes 10h) shifts get offered off, never 12h.
+  // The dayOffRate setting is what one offered-off hour pays; 8h × that rate
+  // is the per-day cost of taking one off.
+  const safeDayOffRate = dayOffRate > 0 ? dayOffRate : 190
+  const dayOffCost = safeDayOffRate * 8
+  const daysOffAvailable = cushion > 0 && dayOffCost > 0 ? Math.floor(cushion / dayOffCost) : 0
+  const shiftsShort = cushion < 0 && avgShiftGross > 0 ? Math.ceil(-cushion / avgShiftGross) : 0
 
   // W2 comparison: only count the period actually covered by your schedule —
   // Jan 1 through the last scheduled future shift (or today if you have no
@@ -786,13 +794,30 @@ function Drawer({
           </div>
         </div>
         <div className="drawer-card">
-          <div className="lbl">Shifts to goal</div>
-          <div className="val mono">{shiftsToGoal === 0 ? '0' : shiftsToGoal}</div>
-          <div className="sub">
-            {shiftsToGoal === 0
-              ? 'Goal reached at current schedule'
-              : `~${fmtMoneyShort(avgShiftGross)} per avg shift`}
-          </div>
+          <div className="lbl">Day off check</div>
+          {cushion >= dayOffCost ? (
+            <>
+              <div className="val mono" style={{ color: 'var(--positive)' }}>
+                ✓ {daysOffAvailable} {daysOffAvailable === 1 ? 'day' : 'days'}
+              </div>
+              <div className="sub">8h × ${safeDayOffRate}/hr · +{fmtMoneyShort(cushion)} cushion</div>
+              <div className="delta ahead">Can drop up to {daysOffAvailable} 8h shift{daysOffAvailable === 1 ? '' : 's'}</div>
+            </>
+          ) : cushion >= 0 ? (
+            <>
+              <div className="val mono">On track</div>
+              <div className="sub">+{fmtMoneyShort(cushion)} over goal · less than one 8h shift of cushion</div>
+              <div className="delta ahead">No room to drop a shift yet</div>
+            </>
+          ) : (
+            <>
+              <div className="val mono" style={{ color: 'var(--accent)' }}>
+                ✗ −{fmtMoneyShort(-cushion)}
+              </div>
+              <div className="sub">~{fmtMoneyShort(avgShiftGross)} per avg shift</div>
+              <div className="delta behind">Add ~{shiftsShort} shift{shiftsShort === 1 ? '' : 's'} to hit goal</div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -1703,6 +1728,21 @@ function SettingsModal({
                 style={{ width: 80 }}
               />
             </div>
+            <div className="settings-row">
+              <div className="row-label">
+                <span className="name">Day-off rate ($/hr)</span>
+                <span className="meta">8h × this rate = cost of one offered-off shift</span>
+              </div>
+              <input
+                className="s-input"
+                type="number"
+                min={1}
+                step={1}
+                value={settings.dayOffRate ?? 190}
+                onChange={(e) => setSettings({ ...settings, dayOffRate: Number(e.target.value) || 190 })}
+                style={{ width: 80 }}
+              />
+            </div>
           </div>
 
           <div className="settings-section">
@@ -2214,6 +2254,7 @@ export function ScheduleClient({
             earnedYTD={settings.earnedYTD}
             hoursYTD={settings.hoursYTD ?? 0}
             w2WeeklyHours={settings.w2WeeklyHours ?? 36}
+            dayOffRate={settings.dayOffRate ?? 190}
           />
         )}
 

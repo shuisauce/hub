@@ -58,6 +58,9 @@ export type ScheduleSettings = {
   /** Hours per week a comparable full-time W2 would work. Used for the
    * "weeks off vs W2" stat. Default 36. */
   w2WeeklyHours: number
+  /** Hourly rate to assume for offered-off shifts. Used by the "Day off check"
+   * dashboard card. Default 190 (typical 8h shift rate). */
+  dayOffRate: number
 }
 
 export const DEFAULT_SETTINGS: ScheduleSettings = {
@@ -84,6 +87,7 @@ export const DEFAULT_SETTINGS: ScheduleSettings = {
   earnedYTD: 0,
   hoursYTD: 0,
   w2WeeklyHours: 36,
+  dayOffRate: 190,
 }
 
 let cachedSql: ReturnType<typeof neon> | null = null
