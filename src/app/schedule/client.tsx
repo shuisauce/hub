@@ -6,6 +6,7 @@ import {
   type ReactElement,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -81,10 +82,19 @@ function todayKey() {
   return dateKey(d.getFullYear(), d.getMonth(), d.getDate())
 }
 
+// Last date the user can schedule (one calendar year from today, inclusive).
+function maxScheduleKey() {
+  const t = new Date()
+  const d = new Date(t.getFullYear() + 1, t.getMonth(), t.getDate())
+  return dateKey(d.getFullYear(), d.getMonth(), d.getDate())
+}
+
+// 3 months of history + current + 12 months ahead. ISO date strings sort
+// lexically, so `cellKey > maxScheduleKey()` cleanly disables cells past the limit.
 function visibleMonths(): { y: number; m: number }[] {
   const today = new Date()
   const out: { y: number; m: number }[] = []
-  for (let i = -1; i <= 1; i++) {
+  for (let i = -3; i <= 12; i++) {
     const d = new Date(today.getFullYear(), today.getMonth() + i, 1)
     out.push({ y: d.getFullYear(), m: d.getMonth() })
   }
@@ -160,12 +170,177 @@ function expectedPace(throughKey: string, goal: number) {
   return goal * frac
 }
 
+// ---------- Exports (CSV + .ics download) ----------
+
+function triggerDownload(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  setTimeout(() => {
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }, 100)
+}
+
+function csvEscape(v: string | number | null | undefined): string {
+  const s = String(v == null ? '' : v)
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
+}
+
+function exportCSV(schedule: Schedule, settings: ScheduleSettings) {
+  const lookup = makeHospLookup(settings.hospitals)
+  const rows: (string | number)[][] = [
+    ['Date', 'Day', 'Type', 'Hospital', 'Hospital ID', 'Hours', 'Label', 'Rate', 'Gross', 'On-call'],
+  ]
+  const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const emit = (key: string, s: ShiftEntry, isOverlay: boolean) => {
+    const p = parseKey(key)
+    const dt = new Date(p.y, p.m, p.d)
+    const hosp = lookup[s.hosp]
+    const isOff = s.hosp === 'OFF'
+    const isOc = !!s.oc || isOverlay
+    const type = isOff ? 'OFF' : isOc ? 'On-call' : 'Shift'
+    const rate = hosp?.rate ?? 0
+    const gross = isOff || isOc ? 0 : rate * (s.h || 0)
+    rows.push([
+      key,
+      dows[dt.getDay()],
+      type,
+      hosp?.name ?? '',
+      s.hosp,
+      s.h || 0,
+      s.label ?? '',
+      rate,
+      gross,
+      isOc ? 'yes' : '',
+    ])
+  }
+  Object.keys(schedule).sort().forEach((k) => {
+    const s = schedule[k]
+    if (!s) return
+    emit(k, s, false)
+    if (s.ocOverlay) emit(k, { hosp: s.ocOverlay.hosp, h: s.ocOverlay.h, label: s.ocOverlay.label }, true)
+  })
+  const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n')
+  triggerDownload('schedule-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv')
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+function icsDate(y: number, m: number, d: number): string {
+  return `${y}${pad2(m + 1)}${pad2(d)}`
+}
+function icsEscape(s: string | null | undefined): string {
+  return String(s ?? '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n')
+}
+
+function exportICS(schedule: Schedule, settings: ScheduleSettings) {
+  const lookup = makeHospLookup(settings.hospitals)
+  const opts = settings.hourOptions
+  const findTpl = (label: string | undefined | null) =>
+    label
+      ? (opts.find((o) => typeof o === 'object' && o.label === label) as
+          | { label: string; hours: number; oc?: boolean; start?: string; end?: string }
+          | undefined)
+      : undefined
+
+  const lines: string[] = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//KMS Anesthesia//Schedule Planner//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:CRNA Schedule',
+    'X-WR-TIMEZONE:America/Detroit',
+  ]
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
+
+  const emit = (key: string, s: ShiftEntry, suffix: string) => {
+    const p = parseKey(key)
+    const hosp = lookup[s.hosp]
+    const isOff = s.hosp === 'OFF'
+    const isOc = !!s.oc || suffix === 'oc'
+    const tpl = findTpl(s.label)
+    const uid = key + (suffix ? '-' + suffix : '') + '@kms-schedule'
+    let summary: string
+    let dtStart: string
+    let dtEnd: string
+    if (isOff) {
+      summary = 'OFF'
+      dtStart = 'DTSTART;VALUE=DATE:' + icsDate(p.y, p.m, p.d)
+      const next = new Date(p.y, p.m, p.d + 1)
+      dtEnd = 'DTEND;VALUE=DATE:' + icsDate(next.getFullYear(), next.getMonth(), next.getDate())
+    } else {
+      const short = hosp?.short ?? hosp?.name ?? s.hosp
+      summary =
+        short +
+        ' · ' +
+        (isOc ? 'On-call' + (s.label ? ' (' + s.label + ')' : '') : (s.label || `${s.h}h`))
+      let sh = 7
+      let sm = 0
+      let eh = 7 + (s.h || 0)
+      let em = 0
+      if (tpl?.start && tpl?.end) {
+        const [a0, a1] = tpl.start.split(':').map(Number)
+        const [b0, b1] = tpl.end.split(':').map(Number)
+        sh = a0; sm = a1 || 0; eh = b0; em = b1 || 0
+      }
+      const startStr = icsDate(p.y, p.m, p.d) + 'T' + pad2(sh) + pad2(sm) + '00'
+      const endDate = new Date(p.y, p.m, p.d, eh, em)
+      if (eh * 60 + em <= sh * 60 + sm) endDate.setDate(endDate.getDate() + 1)
+      const endStr =
+        icsDate(endDate.getFullYear(), endDate.getMonth(), endDate.getDate()) +
+        'T' +
+        pad2(endDate.getHours()) +
+        pad2(endDate.getMinutes()) +
+        '00'
+      dtStart = 'DTSTART;TZID=America/Detroit:' + startStr
+      dtEnd = 'DTEND;TZID=America/Detroit:' + endStr
+    }
+    const desc = isOff
+      ? 'Unavailable'
+      : isOc
+        ? `${hosp?.name ?? s.hosp} on-call`
+        : `${hosp?.name ?? s.hosp} · ${s.h || 0}h · $${(((hosp?.rate ?? 0) * (s.h || 0))).toLocaleString()}`
+    lines.push(
+      'BEGIN:VEVENT',
+      'UID:' + uid,
+      'DTSTAMP:' + stamp,
+      dtStart,
+      dtEnd,
+      'SUMMARY:' + icsEscape(summary),
+      'DESCRIPTION:' + icsEscape(desc),
+      'CATEGORIES:' + (isOff ? 'OFF' : isOc ? 'On-call' : 'Shift'),
+      'END:VEVENT',
+    )
+  }
+
+  Object.keys(schedule).sort().forEach((k) => {
+    const s = schedule[k]
+    if (!s) return
+    emit(k, s, '')
+    if (s.ocOverlay)
+      emit(k, { hosp: s.ocOverlay.hosp, h: s.ocOverlay.h, label: s.ocOverlay.label }, 'oc')
+  })
+  lines.push('END:VCALENDAR')
+  triggerDownload(
+    'crna-schedule-' + new Date().toISOString().slice(0, 10) + '.ics',
+    lines.join('\r\n'),
+    'text/calendar',
+  )
+}
+
 // ---------- Icon ----------
 
 type IconName =
   | 'menu' | 'plus' | 'x' | 'chev-down' | 'chev-left' | 'chev-right'
   | 'brush' | 'calendar' | 'sparkles' | 'trash' | 'sun' | 'today'
-  | 'warn' | 'settings' | 'archive' | 'refresh' | 'edit' | 'copy'
+  | 'download' | 'warn' | 'settings' | 'archive' | 'refresh' | 'edit' | 'copy'
 
 function Icon({ name, size = 16, stroke = 'currentColor', fill = 'none' }:
   { name: IconName; size?: number; stroke?: string; fill?: string }) {
@@ -186,6 +361,7 @@ function Icon({ name, size = 16, stroke = 'currentColor', fill = 'none' }:
     case 'trash': return <svg {...props}><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M5 6l1 14a2 2 0 002 2h8a2 2 0 002-2l1-14" /></svg>
     case 'sun': return <svg {...props}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" /></svg>
     case 'today': return <svg {...props}><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18" /><circle cx="12" cy="15" r="2" fill={stroke} stroke="none" /></svg>
+    case 'download': return <svg {...props}><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
     case 'warn': return <svg {...props}><path d="M12 3L2 20h20L12 3z" /><path d="M12 10v5M12 18v.01" /></svg>
     case 'settings': return <svg {...props}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1.11-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1.11 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34H9a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87V9a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z" /></svg>
     case 'archive': return <svg {...props}><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a2 2 0 002 2h10a2 2 0 002-2V8M10 13h4" /></svg>
@@ -427,7 +603,7 @@ function PaintToolbar({
 // ---------- DayCell ----------
 
 function DayCell({
-  y, m, d, k, schedule, isFirstOfMonth, painting, faded, lookup, today,
+  y, m, d, k, schedule, isFirstOfMonth, painting, faded, beyondLimit, lookup, today,
   onClick, onPaintEnter, onPaintStart,
 }: {
   y: number; m: number; d: number; k: string
@@ -435,19 +611,22 @@ function DayCell({
   isFirstOfMonth: boolean
   painting: boolean
   faded: boolean
+  beyondLimit: boolean
   lookup: Record<string, Hospital>
   today: string
   onClick: (k: string, e: ReactMouseEvent) => void
   onPaintEnter: (k: string) => void
   onPaintStart: (k: string, e: ReactMouseEvent) => void
 }) {
+  const inactive = faded || beyondLimit
   const shift = faded ? undefined : schedule[k]
   const isToday = k === today
   const dow = new Date(y, m, d).getDay()
   const isWeekend = dow === 0 || dow === 6
 
   const cls = ['day']
-  if (faded) cls.push('faded')
+  if (inactive) cls.push('faded')
+  if (beyondLimit) cls.push('beyond-limit')
   if (isToday) cls.push('today')
   if (isWeekend) cls.push('weekend')
   if (painting) cls.push('painting')
@@ -567,7 +746,7 @@ function MonthDivider({
 }
 
 function Calendar({
-  schedule, paintHover, months, weekStart, lookup, today,
+  schedule, paintHover, months, weekStart, lookup, today, maxKey,
   onDayClick, onPaintStart, onPaintEnter, onClearMonth,
 }: {
   schedule: Schedule
@@ -576,6 +755,7 @@ function Calendar({
   weekStart: 'mon' | 'sun'
   lookup: Record<string, Hospital>
   today: string
+  maxKey: string
   onDayClick: (k: string, e: ReactMouseEvent) => void
   onPaintStart: (k: string, e: ReactMouseEvent) => void
   onPaintEnter: (k: string) => void
@@ -616,24 +796,29 @@ function Calendar({
     }
     elements.push(
       <div key={`w-${i}`} className="cal-week">
-        {week.map((c) => (
-          <DayCell
-            key={c.key}
-            y={c.y}
-            m={c.m}
-            d={c.d}
-            k={c.key}
-            schedule={schedule}
-            isFirstOfMonth={!!c.firstOfMonth}
-            faded={!!c.faded}
-            lookup={lookup}
-            today={today}
-            painting={!!paintHover[c.key]}
-            onClick={c.faded ? () => {} : onDayClick}
-            onPaintStart={c.faded ? () => {} : onPaintStart}
-            onPaintEnter={c.faded ? () => {} : onPaintEnter}
-          />
-        ))}
+        {week.map((c) => {
+          const beyondLimit = !c.faded && c.key > maxKey
+          const inactive = !!c.faded || beyondLimit
+          return (
+            <DayCell
+              key={c.key}
+              y={c.y}
+              m={c.m}
+              d={c.d}
+              k={c.key}
+              schedule={schedule}
+              isFirstOfMonth={!!c.firstOfMonth}
+              faded={!!c.faded}
+              beyondLimit={beyondLimit}
+              lookup={lookup}
+              today={today}
+              painting={!!paintHover[c.key]}
+              onClick={inactive ? () => {} : onDayClick}
+              onPaintStart={inactive ? () => {} : onPaintStart}
+              onPaintEnter={inactive ? () => {} : onPaintEnter}
+            />
+          )
+        })}
       </div>,
     )
   }
@@ -1057,8 +1242,21 @@ export function ScheduleClient({
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   const today = useMemo(() => todayKey(), [])
+  const maxKey = useMemo(() => maxScheduleKey(), [])
   const months = useMemo(() => visibleMonths(), [])
   const lookup = useMemo(() => makeHospLookup(settings.hospitals), [settings.hospitals])
+  const scheduleAppRef = useRef<HTMLDivElement | null>(null)
+
+  const scrollToToday = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const root = scheduleAppRef.current
+    if (!root) return
+    const el = root.querySelector('.day.today') as HTMLElement | null
+    if (el) el.scrollIntoView({ block: 'center', behavior })
+  }, [])
+
+  useLayoutEffect(() => {
+    scrollToToday('auto')
+  }, [scrollToToday])
   const icalUrl = useMemo(() => {
     if (typeof window === 'undefined') return ''
     return `${window.location.origin}/api/ical/${icalToken}.ics`
@@ -1171,6 +1369,7 @@ export function ScheduleClient({
   const applyPaint = (key: string): boolean => {
     const p = paintRef.current
     if (!p.active) return false
+    if (key > maxKey) return false
     const cur = scheduleRef.current
     if (p.mode === 'erase') {
       if (cur[key]) {
@@ -1235,6 +1434,7 @@ export function ScheduleClient({
   }
   const onDayClick = (key: string) => {
     if (paintRef.current.active) return
+    if (key > maxKey) return
     setPopupKey(key)
   }
 
@@ -1260,7 +1460,7 @@ export function ScheduleClient({
   }
 
   return (
-    <div className="schedule-app">
+    <div className="schedule-app" ref={scheduleAppRef}>
       <div className="pane">
         <div className="topbar">
           <Link href="/" className="iconbtn" title="Hub" aria-label="Back to hub">
@@ -1269,6 +1469,23 @@ export function ScheduleClient({
           <h1>Schedule</h1>
           <span className="subtle">· {monthName(parseKey(today).m)} {parseKey(today).y}</span>
           <span className="spacer" />
+          <button className="btn" onClick={() => scrollToToday('smooth')} title="Scroll to today">
+            <Icon name="today" size={14} /> Today
+          </button>
+          <button
+            className="btn"
+            onClick={() => exportCSV(schedule, settings)}
+            title="Download all shifts as CSV"
+          >
+            <Icon name="download" size={14} /> CSV
+          </button>
+          <button
+            className="btn"
+            onClick={() => exportICS(schedule, settings)}
+            title="Download .ics snapshot for Apple/Google Calendar"
+          >
+            <Icon name="calendar" size={14} /> .ics
+          </button>
           <button className="iconbtn" onClick={() => setSettingsOpen(true)} title="Settings">
             <Icon name="settings" size={16} />
           </button>
@@ -1308,6 +1525,7 @@ export function ScheduleClient({
           weekStart={settings.weekStart}
           lookup={lookup}
           today={today}
+          maxKey={maxKey}
           onDayClick={onDayClick}
           onPaintStart={onPaintStart}
           onPaintEnter={onPaintEnter}
