@@ -162,7 +162,18 @@ function Toolbar({
         ↷
       </ToolbarButton>
       {uploadStatus && (
-        <span className="ml-auto text-xs text-zinc-500">{uploadStatus}</span>
+        <span
+          className={
+            'ml-auto text-xs ' +
+            (uploadStatus.startsWith('Upload failed') ||
+            uploadStatus.startsWith("Couldn't") ||
+            uploadStatus.startsWith('Drag had')
+              ? 'text-red-600 dark:text-red-400'
+              : 'text-zinc-500')
+          }
+        >
+          {uploadStatus}
+        </span>
       )}
     </div>
   )
@@ -198,7 +209,7 @@ export function Editor({ note, fontSize }: { note: Note; fontSize: number }) {
         if (!items) return false
         for (let i = 0; i < items.length; i++) {
           const item = items[i]
-          if (item.type.startsWith('image/')) {
+          if (item.kind === 'file' && item.type.startsWith('image/')) {
             const file = item.getAsFile()
             if (file) {
               event.preventDefault()
@@ -211,15 +222,58 @@ export function Editor({ note, fontSize }: { note: Note; fontSize: number }) {
       },
       handleDrop(_view, event, _slice, moved) {
         if (moved) return false
-        const files = event.dataTransfer?.files
-        if (!files || files.length === 0) return false
-        for (const file of Array.from(files)) {
-          if (file.type.startsWith('image/')) {
-            event.preventDefault()
-            void handleImageUpload(file)
-            return true
+        const dt = event.dataTransfer
+        if (!dt) return false
+        // Iterate over .items first — more reliable than .files for drags from
+        // some apps (e.g. macOS Photos) where the file is exposed only as an
+        // item but not in the files list.
+        if (dt.items && dt.items.length > 0) {
+          for (let i = 0; i < dt.items.length; i++) {
+            const it = dt.items[i]
+            if (it.kind === 'file' && it.type.startsWith('image/')) {
+              const file = it.getAsFile()
+              if (file) {
+                event.preventDefault()
+                void handleImageUpload(file)
+                return true
+              }
+            }
           }
         }
+        if (dt.files && dt.files.length > 0) {
+          for (const file of Array.from(dt.files)) {
+            if (file.type.startsWith('image/')) {
+              event.preventDefault()
+              void handleImageUpload(file)
+              return true
+            }
+          }
+        }
+        // Photos.app sometimes only provides the URL of an exported image. Fetch and upload it.
+        const url = dt.getData('text/uri-list') || dt.getData('url') || dt.getData('text/plain')
+        if (url && /^https?:\/\/.+\.(png|jpe?g|gif|webp|heic|svg)/i.test(url)) {
+          event.preventDefault()
+          void (async () => {
+            try {
+              const res = await fetch(url)
+              const blob = await res.blob()
+              const ext = blob.type.split('/')[1] || 'png'
+              await handleImageUpload(new File([blob], `dropped.${ext}`, { type: blob.type }))
+            } catch (err) {
+              setUploadStatus(
+                `Couldn't fetch dropped image: ${err instanceof Error ? err.message : 'unknown'}`,
+              )
+              setTimeout(() => setUploadStatus(null), 5000)
+            }
+          })()
+          return true
+        }
+        // Nothing usable — surface a hint instead of silently doing nothing.
+        const types = dt.types ? Array.from(dt.types).join(', ') : '(none)'
+        setUploadStatus(
+          `Drag had no file. macOS Photos often doesn't expose images via drag — copy & paste (⌘V) instead. (types: ${types})`,
+        )
+        setTimeout(() => setUploadStatus(null), 8000)
         return false
       },
     },
@@ -230,16 +284,15 @@ export function Editor({ note, fontSize }: { note: Note; fontSize: number }) {
 
   async function handleImageUpload(file: File) {
     if (!editor) return
-    setUploadStatus('Uploading…')
-    setError(null)
+    setUploadStatus(`Uploading ${file.name || 'image'}…`)
     try {
       const url = await uploadImage(file)
       editor.chain().focus().setImage({ src: url, alt: file.name }).run()
       setUploadStatus(null)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Upload failed'
-      setError(msg)
-      setUploadStatus(null)
+      setUploadStatus(`Upload failed: ${msg}`)
+      setTimeout(() => setUploadStatus(null), 8000)
     }
   }
 
