@@ -48,7 +48,17 @@ export default async function HubPage() {
           </p>
         </Link>
 
-        <div className="flex cursor-not-allowed flex-col gap-1 rounded-lg border border-black/10 p-6 opacity-60 sm:col-span-2 dark:border-white/10">
+        <Link
+          href="/eval"
+          className="flex flex-col gap-1 rounded-lg border border-black/10 p-6 transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5"
+        >
+          <h2 className="font-medium">Eval</h2>
+          <p className="text-sm text-zinc-500">
+            Drop end-of-day notes, get six polished EASI comment blocks in your voice.
+          </p>
+        </Link>
+
+        <div className="flex cursor-not-allowed flex-col gap-1 rounded-lg border border-black/10 p-6 opacity-60 dark:border-white/10">
           <h2 className="font-medium">Drive</h2>
           <p className="text-sm text-zinc-500">Coming in Phase 3</p>
         </div>

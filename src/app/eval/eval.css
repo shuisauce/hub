@@ -1,0 +1,349 @@
+/* Eval — palette + utility classes mirroring the notes design system */
+.eval-app {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+
+  --bg: #fafaf7;
+  --surface: #ffffff;
+  --surface-2: #f5f4f0;
+  --border: #e7e5df;
+  --border-strong: #d6d3cb;
+  --ink: #1c1c1a;
+  --ink-2: #4a4945;
+  --ink-3: #8a887f;
+  --ink-4: #b8b6ad;
+  --accent: #ea580c;
+  --warn: #dc2626;
+  --positive: #16a34a;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.04);
+
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), 'Inter', -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+html.dark .eval-app {
+  --bg: #15151a;
+  --surface: #1d1d24;
+  --surface-2: #25252e;
+  --border: #2c2c36;
+  --border-strong: #3a3a46;
+  --ink: #f0efeb;
+  --ink-2: #c8c7c0;
+  --ink-3: #898880;
+  --ink-4: #5a5953;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not(.light):not(.dark) .eval-app {
+    --bg: #15151a;
+    --surface: #1d1d24;
+    --surface-2: #25252e;
+    --border: #2c2c36;
+    --border-strong: #3a3a46;
+    --ink: #f0efeb;
+    --ink-2: #c8c7c0;
+    --ink-3: #898880;
+    --ink-4: #5a5953;
+  }
+}
+
+.eval-app .container {
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  flex: 1;
+}
+
+.eval-app .page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.eval-app .page-head h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.eval-app .page-head .actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.eval-app .crumb {
+  font-size: 13px;
+  color: var(--ink-3);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.eval-app .crumb:hover { color: var(--ink); }
+
+.eval-app button { font-family: inherit; cursor: pointer; }
+
+.eval-app .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  text-decoration: none;
+  line-height: 1;
+}
+.eval-app .btn:hover { background: var(--surface-2); color: var(--ink); }
+.eval-app .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.eval-app .btn.primary {
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
+}
+.eval-app .btn.primary:hover { background: var(--ink-2); border-color: var(--ink-2); }
+.eval-app .btn.ghost { background: transparent; border-color: transparent; color: var(--ink-3); }
+.eval-app .btn.ghost:hover { background: var(--surface-2); color: var(--ink); }
+.eval-app .btn.danger { color: var(--warn); }
+.eval-app .btn.danger:hover {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.eval-app .input,
+.eval-app textarea.input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--ink);
+  outline: none;
+  width: 100%;
+  line-height: 1.5;
+}
+.eval-app .input:focus { border-color: var(--ink-3); }
+.eval-app textarea.input { resize: vertical; min-height: 160px; }
+
+/* Segmented control — reuses the notes "seg" look */
+.eval-app .seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  width: 100%;
+}
+.eval-app .seg button {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  font-family: inherit;
+  transition: background 0.1s, color 0.1s;
+}
+.eval-app .seg button:hover { background: var(--surface); color: var(--ink); }
+.eval-app .seg button.active {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.eval-app .field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.eval-app .field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+}
+
+.eval-app .form-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.eval-app .form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 640px) {
+  .eval-app .form-row { grid-template-columns: 1fr; }
+}
+
+.eval-app .submit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.eval-app .status {
+  font-size: 12px;
+  color: var(--ink-3);
+  font-family: var(--font-geist-mono), 'JetBrains Mono', ui-monospace, monospace;
+}
+.eval-app .status.error { color: var(--warn); }
+
+/* Output cards */
+.eval-app .results {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.eval-app .card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.eval-app .card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.eval-app .card-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.eval-app .card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.eval-app .card textarea {
+  width: 100%;
+  min-height: 110px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  line-height: 1.55;
+  font-family: inherit;
+  background: var(--surface-2);
+  color: var(--ink);
+  outline: none;
+  resize: vertical;
+}
+.eval-app .card textarea:focus { border-color: var(--ink-3); }
+
+.eval-app .star { color: var(--ink-3); }
+.eval-app .star.active { color: var(--accent); }
+
+.eval-app .empty {
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--ink-3);
+  font-size: 14px;
+}
+
+/* Voice sample manager */
+.eval-app .sample-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.eval-app .sample-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.eval-app .sample-row:last-child { border-bottom: none; }
+
+.eval-app .sample-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.eval-app .sample-meta .pin {
+  color: var(--accent);
+}
+.eval-app .sample-text {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+.eval-app .sample-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.eval-app .row-btn {
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+  background: transparent;
+  border: none;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.eval-app .row-btn:hover { background: var(--surface-2); color: var(--ink); }
+.eval-app .row-btn.danger:hover {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--warn);
+}
+
+@media (max-width: 720px) {
+  .eval-app .container { padding: 20px 14px; gap: 18px; }
+}
