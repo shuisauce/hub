@@ -42,6 +42,9 @@ export type ScheduleSettings = {
   annualGoal: number
   /** Manually entered "I've earned this much YTD" baseline. */
   earnedYTD: number
+  /** Hours per week a comparable full-time W2 would work. Used for the
+   * "weeks off vs W2" stat. Default 36. */
+  w2WeeklyHours: number
 }
 
 export const DEFAULT_SETTINGS: ScheduleSettings = {
@@ -66,6 +69,7 @@ export const DEFAULT_SETTINGS: ScheduleSettings = {
   ],
   annualGoal: 285000,
   earnedYTD: 0,
+  w2WeeklyHours: 36,
 }
 
 let cachedSql: ReturnType<typeof neon> | null = null

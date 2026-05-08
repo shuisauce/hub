@@ -597,13 +597,14 @@ function PaceStrip({
 // ---------- Drawer ----------
 
 function Drawer({
-  open, schedule, lookup, annualGoal, earnedYTD,
+  open, schedule, lookup, annualGoal, earnedYTD, w2WeeklyHours,
 }: {
   open: boolean
   schedule: Schedule
   lookup: Record<string, Hospital>
   annualGoal: number
   earnedYTD: number
+  w2WeeklyHours: number
 }) {
   const today = todayKey()
   const expected = expectedPace(today, annualGoal)
@@ -614,32 +615,38 @@ function Drawer({
   let futureGross = 0
   let paidShiftCount = 0
   let paidShiftGross = 0
-  let offDayCount = 0
+  let scheduledHours = 0
   for (const k in schedule) {
     const p = parseKey(k)
     if (p.y !== todayP.y) continue
     const s = schedule[k]
-    if (isOffShift(s)) {
-      offDayCount++
-      continue
-    }
     if (isUncountedShift(s)) continue
     if (k > today) futureGross += shiftAmount(s, lookup)
     paidShiftCount++
     paidShiftGross += shiftAmount(s, lookup)
+    scheduledHours += s.h
+    if (s.ocOverlay) {
+      // The on-call overlay is uncounted income but still "hours committed" —
+      // skip it for the W2-comparison hours since on-call isn't an active shift.
+    }
   }
 
   const projected = earnedYTD + futureGross
   const remaining = Math.max(0, annualGoal - projected)
-  const weeksOff = offDayCount / 5
 
-  // Average shift gross (across all paid shifts in the year). Falls back to
-  // a 12h shift at the highest enabled hospital rate if there's no history.
+  // Average shift gross — used for the "shifts to goal" estimate. Falls back
+  // to a 12h shift at the highest enabled rate if there's no history yet.
   const avgShiftGross =
     paidShiftCount > 0
       ? paidShiftGross / paidShiftCount
       : (Object.values(lookup).reduce((m, h) => Math.max(m, h.rate), 0) || 233) * 12
   const shiftsToGoal = remaining > 0 && avgShiftGross > 0 ? Math.ceil(remaining / avgShiftGross) : 0
+
+  // W2 comparison: a full-time W2 would work `w2WeeklyHours × 52` over the
+  // year. Subtract what's actually scheduled, divide by the weekly baseline,
+  // and that's how many weeks of "vacation" you're effectively taking.
+  const w2YearHours = Math.max(1, w2WeeklyHours) * 52
+  const weeksOffVsW2 = (w2YearHours - scheduledHours) / Math.max(1, w2WeeklyHours)
 
   return (
     <div className="drawer" style={{ maxHeight: open ? 360 : 0 }}>
@@ -663,9 +670,14 @@ function Drawer({
           </div>
         </div>
         <div className="drawer-card">
-          <div className="lbl">Weeks off</div>
-          <div className="val mono">{weeksOff.toFixed(1)}</div>
-          <div className="sub">{offDayCount} OFF day{offDayCount === 1 ? '' : 's'} · 5-day work week</div>
+          <div className="lbl">Weeks off vs W2</div>
+          <div className="val mono">{weeksOffVsW2 >= 0 ? weeksOffVsW2.toFixed(1) : `−${Math.abs(weeksOffVsW2).toFixed(1)}`}</div>
+          <div className="sub">{Math.round(scheduledHours)}h scheduled / {w2YearHours}h ({w2WeeklyHours}h × 52)</div>
+          <div className={'delta ' + (weeksOffVsW2 < 0 ? 'ahead' : 'behind')}>
+            {weeksOffVsW2 < 0
+              ? `Working ${Math.abs(weeksOffVsW2).toFixed(1)} more weeks than W2`
+              : `Like ${weeksOffVsW2.toFixed(1)} weeks of PTO`}
+          </div>
         </div>
         <div className="drawer-card">
           <div className="lbl">Shifts to goal</div>
@@ -1521,6 +1533,22 @@ function SettingsModal({
                 style={{ width: 120 }}
               />
             </div>
+            <div className="settings-row">
+              <div className="row-label">
+                <span className="name">W2 hours/week</span>
+                <span className="meta">baseline for "weeks off vs W2"</span>
+              </div>
+              <input
+                className="s-input"
+                type="number"
+                min={1}
+                max={80}
+                step={1}
+                value={settings.w2WeeklyHours ?? 36}
+                onChange={(e) => setSettings({ ...settings, w2WeeklyHours: Number(e.target.value) || 36 })}
+                style={{ width: 80 }}
+              />
+            </div>
           </div>
 
           <div className="settings-section">
@@ -2008,6 +2036,7 @@ export function ScheduleClient({
             lookup={lookup}
             annualGoal={settings.annualGoal}
             earnedYTD={settings.earnedYTD}
+            w2WeeklyHours={settings.w2WeeklyHours ?? 36}
           />
         )}
 
