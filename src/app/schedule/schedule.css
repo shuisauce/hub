@@ -37,8 +37,27 @@
   flex-direction: column;
 }
 
+/* Manual dark override (always dark) */
+.schedule-app[data-theme="dark"] {
+  --bg: #15151a;
+  --surface: #1d1d24;
+  --surface-2: #25252e;
+  --border: #2c2c36;
+  --border-strong: #3a3a46;
+  --ink: #f0efeb;
+  --ink-2: #c8c7c0;
+  --ink-3: #898880;
+  --ink-4: #5a5953;
+  --hfh-bg: #2a1f4a;
+  --gr-bg: #0d3640;
+  --accent-bg: #3d2410;
+  --warn-bg: #3d1818;
+}
+
+/* System mode (no override or "system") follows the OS preference */
 @media (prefers-color-scheme: dark) {
-  .schedule-app {
+  .schedule-app:not([data-theme="light"]):not([data-theme="dark"]),
+  .schedule-app[data-theme="system"] {
     --bg: #15151a;
     --surface: #1d1d24;
     --surface-2: #25252e;

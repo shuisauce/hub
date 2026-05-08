@@ -36,6 +36,7 @@ export type ScheduleSettings = {
   showTraining: boolean
   showIncome: boolean
   weekStart: 'mon' | 'sun'
+  theme: 'system' | 'light' | 'dark'
   hospitals: Hospital[]
   hourOptions: HourOption[]
   annualGoal: number
@@ -49,6 +50,7 @@ export const DEFAULT_SETTINGS: ScheduleSettings = {
   showTraining: false,
   showIncome: true,
   weekStart: 'mon',
+  theme: 'system',
   hospitals: [
     { id: 'HFH', name: 'Henry Ford', short: 'HFH', rate: 233, color: '#7c3aed', pay: 'biweekly', enabled: true },
     { id: 'GR', name: 'Garden Park', short: 'GR', rate: 250, color: '#0891b2', pay: 'monthly', enabled: true },

@@ -84,6 +84,30 @@ function todayKey() {
   return dateKey(d.getFullYear(), d.getMonth(), d.getDate())
 }
 
+// Find the contiguous stretch of OFF days that includes `key`. Returns date
+// keys in chronological order — used to label a whole vacation week with one
+// reason in one click.
+function findOffStretch(schedule: Schedule, key: string): string[] {
+  if (schedule[key]?.hosp !== 'OFF') return [key]
+  const out: string[] = [key]
+  const step = (k: string, dir: 1 | -1) => {
+    const p = parseKey(k)
+    const d = new Date(p.y, p.m, p.d + dir)
+    return dateKey(d.getFullYear(), d.getMonth(), d.getDate())
+  }
+  let cursor = step(key, -1)
+  while (schedule[cursor]?.hosp === 'OFF') {
+    out.unshift(cursor)
+    cursor = step(cursor, -1)
+  }
+  cursor = step(key, 1)
+  while (schedule[cursor]?.hosp === 'OFF') {
+    out.push(cursor)
+    cursor = step(cursor, 1)
+  }
+  return out
+}
+
 // Last date the user can schedule (one calendar year from today, inclusive).
 function maxScheduleKey() {
   const t = new Date()
@@ -226,7 +250,10 @@ function csvEscape(v: string | number | null | undefined): string {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
 }
 
-function exportCSV(schedule: Schedule, settings: ScheduleSettings) {
+type CsvAudience = 'personal' | 'work'
+
+function exportCSV(schedule: Schedule, settings: ScheduleSettings, audience: CsvAudience = 'personal') {
+  if (audience === 'work') return exportWorkCSV(schedule, settings)
   const lookup = makeHospLookup(settings.hospitals)
   const rows: (string | number)[][] = [
     ['Date', 'Day', 'Type', 'Hospital', 'Hospital ID', 'Hours', 'Label', 'Rate', 'Gross', 'On-call', 'No Late', 'No-Late reason'],
@@ -265,7 +292,42 @@ function exportCSV(schedule: Schedule, settings: ScheduleSettings) {
     if (s.ocOverlay) emit(k, { hosp: s.ocOverlay.hosp, h: s.ocOverlay.h, label: s.ocOverlay.label }, true, false, '')
   })
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n')
-  triggerDownload('schedule-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv')
+  triggerDownload('schedule-personal-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv')
+}
+
+// Stripped CSV for schedulers — only date + the bare scheduling facts. No
+// reasons, OFF labels, rates, or gross are included.
+function exportWorkCSV(schedule: Schedule, settings: ScheduleSettings) {
+  const lookup = makeHospLookup(settings.hospitals)
+  const rows: (string | number)[][] = [
+    ['Date', 'Day', 'Hospital', 'Hours', 'On-call', 'No Late', 'OFF'],
+  ]
+  const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  Object.keys(schedule).sort().forEach((k) => {
+    const s = schedule[k]
+    if (!s) return
+    const p = parseKey(k)
+    const dt = new Date(p.y, p.m, p.d)
+    const day = dows[dt.getDay()]
+    const hosp = lookup[s.hosp]
+    const isOff = s.hosp === 'OFF'
+    const isNL = s.hosp === 'NL'
+    if (isOff) {
+      rows.push([k, day, '', 0, '', '', 'yes'])
+      return
+    }
+    if (isNL) {
+      rows.push([k, day, '', 0, '', 'yes', ''])
+      return
+    }
+    rows.push([k, day, hosp?.short ?? s.hosp, s.h || 0, s.oc ? 'yes' : '', s.noLate ? 'yes' : '', ''])
+    if (s.ocOverlay) {
+      const oh = lookup[s.ocOverlay.hosp]
+      rows.push([k, day, oh?.short ?? s.ocOverlay.hosp, s.ocOverlay.h || 0, 'yes', '', ''])
+    }
+  })
+  const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n')
+  triggerDownload('schedule-work-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv')
 }
 
 function pad2(n: number): string {
@@ -535,36 +597,49 @@ function PaceStrip({
 // ---------- Drawer ----------
 
 function Drawer({
-  open, schedule, lookup, annualGoal, earnedYTD, hospitals,
+  open, schedule, lookup, annualGoal, earnedYTD,
 }: {
   open: boolean
   schedule: Schedule
   lookup: Record<string, Hospital>
   annualGoal: number
   earnedYTD: number
-  hospitals: Hospital[]
 }) {
   const today = todayKey()
   const expected = expectedPace(today, annualGoal)
   const delta = earnedYTD - expected
   const todayP = parseKey(today)
 
-  // Future scheduled gross (after today, this year only) and per-hospital scheduled hours
+  // Walk the year once, collecting all stats we need.
   let futureGross = 0
-  const perHosp = new Map<string, { gross: number; hours: number }>()
+  let paidShiftCount = 0
+  let paidShiftGross = 0
+  let offDayCount = 0
   for (const k in schedule) {
     const p = parseKey(k)
     if (p.y !== todayP.y) continue
     const s = schedule[k]
+    if (isOffShift(s)) {
+      offDayCount++
+      continue
+    }
     if (isUncountedShift(s)) continue
     if (k > today) futureGross += shiftAmount(s, lookup)
-    const cur = perHosp.get(s.hosp) ?? { gross: 0, hours: 0 }
-    cur.gross += shiftAmount(s, lookup)
-    cur.hours += s.h
-    perHosp.set(s.hosp, cur)
+    paidShiftCount++
+    paidShiftGross += shiftAmount(s, lookup)
   }
+
   const projected = earnedYTD + futureGross
   const remaining = Math.max(0, annualGoal - projected)
+  const weeksOff = offDayCount / 5
+
+  // Average shift gross (across all paid shifts in the year). Falls back to
+  // a 12h shift at the highest enabled hospital rate if there's no history.
+  const avgShiftGross =
+    paidShiftCount > 0
+      ? paidShiftGross / paidShiftCount
+      : (Object.values(lookup).reduce((m, h) => Math.max(m, h.rate), 0) || 233) * 12
+  const shiftsToGoal = remaining > 0 && avgShiftGross > 0 ? Math.ceil(remaining / avgShiftGross) : 0
 
   return (
     <div className="drawer" style={{ maxHeight: open ? 360 : 0 }}>
@@ -587,16 +662,20 @@ function Drawer({
               : `${fmtMoneyShort(remaining)} still to schedule`}
           </div>
         </div>
-        {hospitals.filter((h) => h.enabled !== false).slice(0, 2).map((h) => {
-          const stats = perHosp.get(h.id) ?? { gross: 0, hours: 0 }
-          return (
-            <div key={h.id} className="drawer-card" style={{ borderLeft: `3px solid ${h.color}` }}>
-              <div className="lbl">{h.name} (this year)</div>
-              <div className="val mono" style={{ color: h.color }}>{fmtMoney(stats.gross)}</div>
-              <div className="sub">{stats.hours} hrs scheduled · ${h.rate}/hr · {h.pay}</div>
-            </div>
-          )
-        })}
+        <div className="drawer-card">
+          <div className="lbl">Weeks off</div>
+          <div className="val mono">{weeksOff.toFixed(1)}</div>
+          <div className="sub">{offDayCount} OFF day{offDayCount === 1 ? '' : 's'} · 5-day work week</div>
+        </div>
+        <div className="drawer-card">
+          <div className="lbl">Shifts to goal</div>
+          <div className="val mono">{shiftsToGoal === 0 ? '0' : shiftsToGoal}</div>
+          <div className="sub">
+            {shiftsToGoal === 0
+              ? 'Goal reached at current schedule'
+              : `~${fmtMoneyShort(avgShiftGross)} per avg shift`}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -992,7 +1071,8 @@ function DayPopup({
   const existing = schedule[k]
   const visibleHosps = hospitals.filter((h) => h.enabled !== false)
 
-  // OFF-day editor branch — single text field for the reason.
+  // OFF-day editor branch — single text field for the reason, with optional
+  // "apply to range" for a contiguous stretch of OFF days.
   if (existing?.hosp === 'OFF') {
     return (
       <OffReasonPopup
@@ -1000,7 +1080,18 @@ function DayPopup({
         month={p.m}
         day={p.d}
         existing={existing}
+        stretch={findOffStretch(schedule, k)}
         onSave={(entry) => { onSave(k, entry); onClose() }}
+        onSaveRange={(reason, dates) => {
+          for (const d of dates) {
+            const cur = schedule[d]
+            if (cur?.hosp !== 'OFF') continue
+            const next: ShiftEntry = { hosp: 'OFF', h: 0 }
+            if (reason) next.label = reason
+            onSave(d, next)
+          }
+          onClose()
+        }}
         onDelete={() => { onDelete(k); onClose() }}
         onClose={onClose}
       />
@@ -1124,23 +1215,39 @@ function DayPopup({
 }
 
 function OffReasonPopup({
-  dayName, month, day, existing, onSave, onDelete, onClose,
+  dayName, month, day, existing, stretch, onSave, onSaveRange, onDelete, onClose,
 }: {
   dayName: string
   month: number
   day: number
   existing: ShiftEntry
+  stretch: string[]
   onSave: (entry: ShiftEntry) => void
+  onSaveRange: (reason: string, dates: string[]) => void
   onDelete: () => void
   onClose: () => void
 }) {
   const [reason, setReason] = useState(existing.label ?? '')
+  const [applyToRange, setApplyToRange] = useState(stretch.length > 1)
 
   const save = () => {
+    const trimmed = reason.trim()
+    if (applyToRange && stretch.length > 1) {
+      onSaveRange(trimmed, stretch)
+      return
+    }
     const next: ShiftEntry = { hosp: 'OFF', h: 0 }
-    if (reason.trim()) next.label = reason.trim()
+    if (trimmed) next.label = trimmed
     onSave(next)
   }
+
+  const stretchLabel = stretch.length > 1
+    ? (() => {
+        const a = parseKey(stretch[0])
+        const b = parseKey(stretch[stretch.length - 1])
+        return `${monthShort(a.m)} ${a.d} – ${monthShort(b.m)} ${b.d}`
+      })()
+    : null
 
   return (
     <div className="popup-backdrop" onClick={onClose}>
@@ -1163,6 +1270,20 @@ function OffReasonPopup({
               style={{ height: 38, fontSize: 14 }}
             />
           </div>
+          {stretch.length > 1 && (
+            <div className="popup-row">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={applyToRange}
+                  onChange={(e) => setApplyToRange(e.target.checked)}
+                />
+                <span>
+                  Apply to all <strong>{stretch.length} consecutive OFF days</strong> ({stretchLabel})
+                </span>
+              </label>
+            </div>
+          )}
         </div>
         <div className="popup-foot">
           <button className="btn danger" onClick={onDelete}><Icon name="trash" size={12} /> Clear OFF</button>
@@ -1350,6 +1471,14 @@ function SettingsModal({
               <div className="chip-group">
                 <button className={'chip' + (settings.weekStart === 'sun' ? ' active' : '')} onClick={() => setSettings({ ...settings, weekStart: 'sun' })}>Sunday</button>
                 <button className={'chip' + (settings.weekStart === 'mon' ? ' active' : '')} onClick={() => setSettings({ ...settings, weekStart: 'mon' })}>Monday</button>
+              </div>
+            </div>
+            <div className="settings-row">
+              <div className="row-label"><span className="name">Theme</span></div>
+              <div className="chip-group">
+                <button className={'chip' + ((settings.theme ?? 'system') === 'system' ? ' active' : '')} onClick={() => setSettings({ ...settings, theme: 'system' })}>System</button>
+                <button className={'chip' + (settings.theme === 'light' ? ' active' : '')} onClick={() => setSettings({ ...settings, theme: 'light' })}>Light</button>
+                <button className={'chip' + (settings.theme === 'dark' ? ' active' : '')} onClick={() => setSettings({ ...settings, theme: 'dark' })}>Dark</button>
               </div>
             </div>
           </div>
@@ -1567,6 +1696,7 @@ export function ScheduleClient({
   const [popupKey, setPopupKey] = useState<string | null>(null)
   const [paintHover, setPaintHover] = useState<Record<string, boolean>>({})
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [csvPickerOpen, setCsvPickerOpen] = useState(false)
 
   const today = useMemo(() => todayKey(), [])
   const maxKey = useMemo(() => maxScheduleKey(), [])
@@ -1830,7 +1960,7 @@ export function ScheduleClient({
   }
 
   return (
-    <div className="schedule-app" ref={scheduleAppRef}>
+    <div className="schedule-app" data-theme={settings.theme} ref={scheduleAppRef}>
       <div className="pane">
         <div className="topbar">
           <Link href="/" className="btn" title="Back to Hub">
@@ -1844,8 +1974,8 @@ export function ScheduleClient({
           </button>
           <button
             className="btn"
-            onClick={() => exportCSV(schedule, settings)}
-            title="Download all shifts as CSV"
+            onClick={() => setCsvPickerOpen(true)}
+            title="Download CSV"
           >
             <Icon name="download" size={14} /> CSV
           </button>
@@ -1878,7 +2008,6 @@ export function ScheduleClient({
             lookup={lookup}
             annualGoal={settings.annualGoal}
             earnedYTD={settings.earnedYTD}
-            hospitals={settings.hospitals}
           />
         )}
 
@@ -1924,6 +2053,56 @@ export function ScheduleClient({
           setSettings={setSettings}
           icalUrl={icalUrl}
         />
+
+        {csvPickerOpen && (
+          <CsvPickerPopup
+            onPersonal={() => { exportCSV(schedule, settings, 'personal'); setCsvPickerOpen(false) }}
+            onWork={() => { exportCSV(schedule, settings, 'work'); setCsvPickerOpen(false) }}
+            onClose={() => setCsvPickerOpen(false)}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function CsvPickerPopup({
+  onPersonal, onWork, onClose,
+}: {
+  onPersonal: () => void
+  onWork: () => void
+  onClose: () => void
+}) {
+  return (
+    <div className="popup-backdrop" onClick={onClose}>
+      <div className="popup" onClick={(e) => e.stopPropagation()}>
+        <div className="popup-head">
+          <Icon name="download" size={18} />
+          <h3>Download CSV</h3>
+          <button className="iconbtn close" onClick={onClose}><Icon name="x" size={16} /></button>
+        </div>
+        <div className="popup-body">
+          <button
+            className="btn"
+            onClick={onPersonal}
+            style={{ justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start', padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 8, gap: 4 }}
+          >
+            <span style={{ fontWeight: 700, fontSize: 14 }}>Personal — full export</span>
+            <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 400 }}>
+              Every column: hospital name, rate, gross pay, OFF reason, No-Late reason. Use for your own records.
+            </span>
+          </button>
+          <button
+            className="btn"
+            onClick={onWork}
+            style={{ justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start', padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 8, gap: 4 }}
+          >
+            <span style={{ fontWeight: 700, fontSize: 14 }}>Work — for schedulers</span>
+            <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 400 }}>
+              Date · day · hospital · hours · on-call · no-late · OFF. No reasons, no rates, no pay.
+            </span>
+          </button>
+        </div>
       </div>
     </div>
   )
