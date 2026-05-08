@@ -2,23 +2,246 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { EditorContent, useEditor, type Editor as TiptapEditor } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import Image from '@tiptap/extension-image'
+import Placeholder from '@tiptap/extension-placeholder'
 import { saveNoteAction } from '../actions'
 import type { Note } from '@/lib/db'
+import './editor.css'
 
 const AUTOSAVE_MS = 600
 
 type Status = 'idle' | 'unsaved' | 'saving' | 'saved' | 'error'
 
+// Plain-text notes saved before rich text was added arrive here as raw text
+// rather than HTML. Detect that and wrap each line in <p> so newlines survive.
+function toEditorContent(raw: string): string {
+  if (!raw) return ''
+  if (/<[a-z][^>]*>/i.test(raw)) return raw
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return raw
+    .split('\n')
+    .map((line) => (line ? `<p>${esc(line)}</p>` : '<p></p>'))
+    .join('')
+}
+
+async function uploadImage(file: File): Promise<string> {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch('/api/blob/upload', { method: 'POST', body: fd })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(err.error || `Upload failed (${res.status})`)
+  }
+  const json = (await res.json()) as { url: string }
+  return json.url
+}
+
+function ToolbarButton({
+  onClick, active, disabled, title, children,
+}: {
+  onClick: () => void
+  active?: boolean
+  disabled?: boolean
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+      className={
+        'min-w-[28px] rounded px-2 py-1 text-sm font-medium transition-colors disabled:opacity-40 ' +
+        (active
+          ? 'bg-black text-white dark:bg-white dark:text-black'
+          : 'text-zinc-700 hover:bg-black/5 dark:text-zinc-300 dark:hover:bg-white/10')
+      }
+    >
+      {children}
+    </button>
+  )
+}
+
+function Toolbar({
+  editor, uploadStatus,
+}: {
+  editor: TiptapEditor | null
+  uploadStatus: string | null
+}) {
+  if (!editor) return <div className="h-9" />
+  return (
+    <div className="sticky top-0 z-10 flex flex-wrap items-center gap-1 border-b border-black/10 bg-[var(--background)] px-1 py-1.5 dark:border-white/10">
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleBold().run()}
+        active={editor.isActive('bold')}
+        title="Bold (⌘B)"
+      >
+        <span className="font-bold">B</span>
+      </ToolbarButton>
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleItalic().run()}
+        active={editor.isActive('italic')}
+        title="Italic (⌘I)"
+      >
+        <span className="italic">I</span>
+      </ToolbarButton>
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleUnderline().run()}
+        active={editor.isActive('underline')}
+        title="Underline (⌘U)"
+      >
+        <span className="underline">U</span>
+      </ToolbarButton>
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleStrike().run()}
+        active={editor.isActive('strike')}
+        title="Strikethrough"
+      >
+        <span className="line-through">S</span>
+      </ToolbarButton>
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleCode().run()}
+        active={editor.isActive('code')}
+        title="Inline code"
+      >
+        <span className="font-mono text-xs">{'<>'}</span>
+      </ToolbarButton>
+      <span className="mx-1 h-5 w-px bg-black/10 dark:bg-white/10" />
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+        active={editor.isActive('heading', { level: 1 })}
+        title="Heading 1"
+      >
+        H1
+      </ToolbarButton>
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+        active={editor.isActive('heading', { level: 2 })}
+        title="Heading 2"
+      >
+        H2
+      </ToolbarButton>
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleBulletList().run()}
+        active={editor.isActive('bulletList')}
+        title="Bullet list"
+      >
+        •
+      </ToolbarButton>
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleOrderedList().run()}
+        active={editor.isActive('orderedList')}
+        title="Numbered list"
+      >
+        1.
+      </ToolbarButton>
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleBlockquote().run()}
+        active={editor.isActive('blockquote')}
+        title="Quote"
+      >
+        &ldquo;
+      </ToolbarButton>
+      <span className="mx-1 h-5 w-px bg-black/10 dark:bg-white/10" />
+      <ToolbarButton
+        onClick={() => editor.chain().focus().undo().run()}
+        disabled={!editor.can().undo()}
+        title="Undo (⌘Z)"
+      >
+        ↶
+      </ToolbarButton>
+      <ToolbarButton
+        onClick={() => editor.chain().focus().redo().run()}
+        disabled={!editor.can().redo()}
+        title="Redo (⌘⇧Z)"
+      >
+        ↷
+      </ToolbarButton>
+      {uploadStatus && (
+        <span className="ml-auto text-xs text-zinc-500">{uploadStatus}</span>
+      )}
+    </div>
+  )
+}
+
 export function Editor({ note, fontSize }: { note: Note; fontSize: number }) {
   const [title, setTitle] = useState(note.title)
-  const [content, setContent] = useState(note.content)
+  const [content, setContent] = useState<string>(toEditorContent(note.content))
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null)
   const router = useRouter()
 
-  const lastSaved = useRef({ title: note.title, content: note.content })
+  const lastSaved = useRef({ title: note.title, content: toEditorContent(note.content) })
   const inFlight = useRef<Promise<void> | null>(null)
   const pending = useRef(false)
+
+  const editor = useEditor({
+    immediatelyRender: false,
+    extensions: [
+      StarterKit,
+      Image.configure({ allowBase64: false, inline: false }),
+      Placeholder.configure({ placeholder: 'Write something…' }),
+    ],
+    content: content,
+    editorProps: {
+      attributes: {
+        class: 'tiptap-editor focus:outline-none',
+        style: `font-size: ${fontSize}px;`,
+      },
+      handlePaste(_view, event) {
+        const items = event.clipboardData?.items
+        if (!items) return false
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i]
+          if (item.type.startsWith('image/')) {
+            const file = item.getAsFile()
+            if (file) {
+              event.preventDefault()
+              void handleImageUpload(file)
+              return true
+            }
+          }
+        }
+        return false
+      },
+      handleDrop(_view, event, _slice, moved) {
+        if (moved) return false
+        const files = event.dataTransfer?.files
+        if (!files || files.length === 0) return false
+        for (const file of Array.from(files)) {
+          if (file.type.startsWith('image/')) {
+            event.preventDefault()
+            void handleImageUpload(file)
+            return true
+          }
+        }
+        return false
+      },
+    },
+    onUpdate({ editor: ed }) {
+      setContent(ed.getHTML())
+    },
+  })
+
+  async function handleImageUpload(file: File) {
+    if (!editor) return
+    setUploadStatus('Uploading…')
+    setError(null)
+    try {
+      const url = await uploadImage(file)
+      editor.chain().focus().setImage({ src: url, alt: file.name }).run()
+      setUploadStatus(null)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Upload failed'
+      setError(msg)
+      setUploadStatus(null)
+    }
+  }
 
   async function flush() {
     if (inFlight.current) {
@@ -131,13 +354,12 @@ export function Editor({ note, fontSize }: { note: Note; fontSize: number }) {
         className="w-full bg-transparent font-semibold tracking-tight outline-none placeholder:text-zinc-400"
         style={{ fontSize: `${Math.round(fontSize * 1.5)}px` }}
       />
-      <textarea
-        value={content}
-        onChange={(e) => setContent(e.target.value)}
-        placeholder="Write something…"
-        className="w-full flex-1 resize-none bg-transparent leading-relaxed outline-none placeholder:text-zinc-400"
-        style={{ fontSize: `${fontSize}px`, fontFamily: 'inherit' }}
-      />
+
+      <Toolbar editor={editor} uploadStatus={uploadStatus} />
+
+      <div className="flex-1 min-h-0">
+        <EditorContent editor={editor} className="tiptap-wrapper h-full" />
+      </div>
     </div>
   )
 }

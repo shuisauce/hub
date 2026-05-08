@@ -12,10 +12,22 @@ const FONT_FAMILIES: Record<'sans' | 'serif' | 'mono', string> = {
   mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
 }
 
+function stripHtml(s: string): string {
+  return s
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?(p|div|h[1-6]|li)[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+}
+
 function previewOf(note: { title: string; content: string }) {
   if (note.title.trim()) return note.title
-  const firstLine = note.content.split('\n').find((l) => l.trim()) ?? ''
-  return firstLine || 'Untitled'
+  const text = stripHtml(note.content)
+  const firstLine = text.split('\n').find((l) => l.trim()) ?? ''
+  return firstLine.trim() || 'Untitled'
 }
 
 function daysLeft(deletedAt: string): number {
