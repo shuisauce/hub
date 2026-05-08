@@ -4,8 +4,12 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import {
   createNote as dbCreateNote,
-  deleteNote as dbDeleteNote,
+  purgeNote as dbPurgeNote,
+  restoreNote as dbRestoreNote,
+  saveNotesSettings as dbSaveNotesSettings,
+  softDeleteNote as dbSoftDeleteNote,
   updateNote as dbUpdateNote,
+  type NotesSettings,
 } from '@/lib/db'
 import { requireSession } from '@/lib/session'
 
@@ -20,8 +24,26 @@ export async function deleteNoteAction(formData: FormData) {
   await requireSession()
   const id = formData.get('id')
   if (typeof id !== 'string') return
-  await dbDeleteNote(id)
+  await dbSoftDeleteNote(id)
   revalidatePath('/notes')
+  revalidatePath('/notes/trash')
+}
+
+export async function restoreNoteAction(formData: FormData) {
+  await requireSession()
+  const id = formData.get('id')
+  if (typeof id !== 'string') return
+  await dbRestoreNote(id)
+  revalidatePath('/notes')
+  revalidatePath('/notes/trash')
+}
+
+export async function purgeNoteAction(formData: FormData) {
+  await requireSession()
+  const id = formData.get('id')
+  if (typeof id !== 'string') return
+  await dbPurgeNote(id)
+  revalidatePath('/notes/trash')
 }
 
 export async function saveNoteAction(
@@ -33,4 +55,10 @@ export async function saveNoteAction(
   await dbUpdateNote(id, title, content)
   revalidatePath('/notes')
   revalidatePath(`/notes/${id}`)
+}
+
+export async function saveNotesSettingsAction(settings: NotesSettings) {
+  await requireSession()
+  await dbSaveNotesSettings(settings)
+  revalidatePath('/notes')
 }

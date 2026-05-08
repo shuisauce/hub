@@ -1,8 +1,12 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --note-font-size: 16px;
+  --note-font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 @theme inline {
@@ -12,11 +16,18 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* System default: follow the OS, but only when no explicit theme class is set */
 @media (prefers-color-scheme: dark) {
-  :root {
+  html:not(.light):not(.dark) {
     --background: #0a0a0a;
     --foreground: #ededed;
   }
+}
+
+/* Manual dark override */
+html.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 body {

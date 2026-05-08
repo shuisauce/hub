@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation'
 import { SignJWT, jwtVerify } from 'jose'
 
 export const COOKIE_NAME = 'session'
-const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000
+export const SESSION_DURATION_MS = 10 * 60 * 1000
 
 function getSecret() {
   const secret = process.env.SESSION_SECRET

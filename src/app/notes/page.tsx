@@ -1,10 +1,17 @@
 import Link from 'next/link'
-import { listNotes } from '@/lib/db'
+import { listNotes, loadNotesSettings } from '@/lib/db'
 import { requireSession } from '@/lib/session'
 import { createNoteAction, deleteNoteAction } from './actions'
+import { NotesSettingsButton } from './settings-popup'
 
 export const metadata = { title: 'Notes' }
 export const dynamic = 'force-dynamic'
+
+const FONT_FAMILIES: Record<'sans' | 'serif' | 'mono', string> = {
+  sans: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  serif: 'ui-serif, Georgia, "Times New Roman", serif',
+  mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+}
 
 function previewOf(note: { title: string; content: string }) {
   if (note.title.trim()) return note.title
@@ -23,11 +30,19 @@ function formatDate(iso: string) {
 
 export default async function NotesPage() {
   await requireSession()
-  const notes = await listNotes()
+  const [notes, settings] = await Promise.all([listNotes(), loadNotesSettings()])
+
+  const wrapperStyle = {
+    fontFamily: FONT_FAMILIES[settings.fontFamily],
+    fontSize: `${settings.fontSize}px`,
+  }
 
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-6 py-10">
-      <header className="flex items-center justify-between">
+    <main
+      className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-6 py-10"
+      style={wrapperStyle}
+    >
+      <header className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Link
             href="/"
@@ -37,14 +52,23 @@ export default async function NotesPage() {
           </Link>
           <h1 className="text-2xl font-semibold tracking-tight">Notes</h1>
         </div>
-        <form action={createNoteAction}>
-          <button
-            type="submit"
-            className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-black/80 dark:bg-white dark:text-black dark:hover:bg-white/80"
+        <div className="flex items-center gap-2">
+          <Link
+            href="/notes/trash"
+            className="rounded-md border border-black/15 px-3 py-1.5 text-sm hover:bg-black/5 dark:border-white/15 dark:hover:bg-white/10"
           >
-            New note
-          </button>
-        </form>
+            Trash
+          </Link>
+          <NotesSettingsButton initial={settings} />
+          <form action={createNoteAction}>
+            <button
+              type="submit"
+              className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-black/80 dark:bg-white dark:text-black dark:hover:bg-white/80"
+            >
+              New note
+            </button>
+          </form>
+        </div>
       </header>
 
       {notes.length === 0 ? (
@@ -74,9 +98,10 @@ export default async function NotesPage() {
                 <button
                   type="submit"
                   className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-black/5 hover:text-red-600 dark:hover:bg-white/10 dark:hover:text-red-400"
-                  aria-label="Delete note"
+                  aria-label="Move to trash"
+                  title="Move to trash (auto-deletes in 30 days)"
                 >
-                  Delete
+                  Trash
                 </button>
               </form>
             </li>

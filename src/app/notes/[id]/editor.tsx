@@ -9,7 +9,7 @@ const AUTOSAVE_MS = 600
 
 type Status = 'idle' | 'unsaved' | 'saving' | 'saved' | 'error'
 
-export function Editor({ note }: { note: Note }) {
+export function Editor({ note, fontSize }: { note: Note; fontSize: number }) {
   const [title, setTitle] = useState(note.title)
   const [content, setContent] = useState(note.content)
   const [status, setStatus] = useState<Status>('idle')
@@ -128,13 +128,15 @@ export function Editor({ note }: { note: Note }) {
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder="Title"
-        className="w-full bg-transparent text-2xl font-semibold tracking-tight outline-none placeholder:text-zinc-400"
+        className="w-full bg-transparent font-semibold tracking-tight outline-none placeholder:text-zinc-400"
+        style={{ fontSize: `${Math.round(fontSize * 1.5)}px` }}
       />
       <textarea
         value={content}
         onChange={(e) => setContent(e.target.value)}
         placeholder="Write something…"
-        className="w-full flex-1 resize-none bg-transparent font-mono text-base leading-relaxed outline-none placeholder:text-zinc-400"
+        className="w-full flex-1 resize-none bg-transparent leading-relaxed outline-none placeholder:text-zinc-400"
+        style={{ fontSize: `${fontSize}px`, fontFamily: 'inherit' }}
       />
     </div>
   )

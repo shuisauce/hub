@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { jwtVerify } from 'jose'
-import { COOKIE_NAME } from '@/lib/session'
+import { SignJWT, jwtVerify } from 'jose'
+import { COOKIE_NAME, SESSION_DURATION_MS } from '@/lib/session'
 
 async function isValidSession(token: string | undefined): Promise<boolean> {
   if (!token) return false
@@ -14,6 +14,27 @@ async function isValidSession(token: string | undefined): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+// Issue a fresh 10-minute session cookie on every authenticated request, so
+// active use keeps the user logged in (sliding expiry) while idle tabs expire
+// on their own.
+async function refreshSessionCookie(res: NextResponse) {
+  const secret = process.env.SESSION_SECRET
+  if (!secret) return
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_MS)
+  const token = await new SignJWT({ ok: true })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime(expiresAt)
+    .sign(new TextEncoder().encode(secret))
+  res.cookies.set(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    expires: expiresAt,
+    sameSite: 'lax',
+    path: '/',
+  })
 }
 
 export default async function proxy(request: NextRequest) {
@@ -33,7 +54,9 @@ export default async function proxy(request: NextRequest) {
   if (!valid) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
-  return NextResponse.next()
+  const res = NextResponse.next()
+  await refreshSessionCookie(res)
+  return res
 }
 
 export const config = {
