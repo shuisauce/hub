@@ -2,14 +2,16 @@ import Link from 'next/link'
 import { listTrash, loadNotesSettings, type Note } from '@/lib/db'
 import { requireSession } from '@/lib/session'
 import { purgeNoteAction, restoreNoteAction } from '../actions'
+import { ConfirmForm } from '../confirm-form'
+import '../notes.css'
 
 export const metadata = { title: 'Trash' }
 export const dynamic = 'force-dynamic'
 
 const FONT_FAMILIES: Record<'sans' | 'serif' | 'mono', string> = {
-  sans: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  sans: 'var(--font-geist-sans), \'Inter\', -apple-system, system-ui, sans-serif',
   serif: 'ui-serif, Georgia, "Times New Roman", serif',
-  mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+  mono: 'var(--font-geist-mono), \'JetBrains Mono\', ui-monospace, monospace',
 }
 
 function stripHtml(s: string): string {
@@ -44,67 +46,51 @@ export default async function TrashPage() {
   }
 
   return (
-    <main
-      className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-6 py-10"
-      style={wrapperStyle}
-    >
-      <header className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/notes"
-            className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-          >
-            ← Notes
-          </Link>
-          <h1 className="text-2xl font-semibold tracking-tight">Trash</h1>
-        </div>
-        <span className="text-xs text-zinc-500">Auto-deleted after 30 days</span>
-      </header>
+    <div className="notes-app">
+      <main className="container" style={wrapperStyle}>
+        <header className="page-head">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Link href="/notes" className="crumb">← Notes</Link>
+            <h1>Trash</h1>
+          </div>
+          <span className="note-meta">Auto-deleted after 30 days</span>
+        </header>
 
-      {notes.length === 0 ? (
-        <p className="text-sm text-zinc-500">Trash is empty.</p>
-      ) : (
-        <ul className="flex flex-col divide-y divide-black/10 rounded-md border border-black/10 dark:divide-white/10 dark:border-white/10">
-          {notes.map((note: Note) => {
-            const left = note.deleted_at ? daysLeft(note.deleted_at) : 30
-            return (
-              <li
-                key={note.id}
-                className="flex items-center justify-between gap-3 px-4 py-3"
-              >
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="truncate text-sm font-medium">
-                    {previewOf(note)}
-                  </span>
-                  <span className="text-xs text-zinc-500">
-                    Auto-deletes in {left} day{left === 1 ? '' : 's'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <form action={restoreNoteAction}>
-                    <input type="hidden" name="id" value={note.id} />
-                    <button
-                      type="submit"
-                      className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-black/5 hover:text-black dark:hover:bg-white/10 dark:hover:text-white"
+        {notes.length === 0 ? (
+          <div className="empty">Trash is empty.</div>
+        ) : (
+          <ul className="note-list">
+            {notes.map((note: Note) => {
+              const left = note.deleted_at ? daysLeft(note.deleted_at) : 30
+              return (
+                <li key={note.id} className="note-row">
+                  <div className="note-link" style={{ cursor: 'default' }}>
+                    <span className="note-title">
+                      <span className="label">{previewOf(note)}</span>
+                    </span>
+                    <span className="note-meta">
+                      Auto-deletes in {left} day{left === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <div className="note-actions">
+                    <form action={restoreNoteAction}>
+                      <input type="hidden" name="id" value={note.id} />
+                      <button type="submit" className="row-btn">Restore</button>
+                    </form>
+                    <ConfirmForm
+                      action={purgeNoteAction}
+                      message={`Delete "${previewOf(note)}" forever? This can't be undone.`}
                     >
-                      Restore
-                    </button>
-                  </form>
-                  <form action={purgeNoteAction}>
-                    <input type="hidden" name="id" value={note.id} />
-                    <button
-                      type="submit"
-                      className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-black/5 hover:text-red-600 dark:hover:bg-white/10 dark:hover:text-red-400"
-                    >
-                      Delete forever
-                    </button>
-                  </form>
-                </div>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-    </main>
+                      <input type="hidden" name="id" value={note.id} />
+                      <button type="submit" className="row-btn danger">Delete forever</button>
+                    </ConfirmForm>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </main>
+    </div>
   )
 }

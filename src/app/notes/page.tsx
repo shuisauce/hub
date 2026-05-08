@@ -1,16 +1,24 @@
 import Link from 'next/link'
 import { listNotes, loadNotesSettings } from '@/lib/db'
 import { requireSession } from '@/lib/session'
-import { createNoteAction, deleteNoteAction } from './actions'
+import {
+  createNoteAction,
+  deleteNoteAction,
+  pinNoteAction,
+  unpinNoteAction,
+} from './actions'
 import { NotesSettingsButton } from './settings-popup'
+import { LocalTime } from './local-time'
+import { ConfirmForm } from './confirm-form'
+import './notes.css'
 
 export const metadata = { title: 'Notes' }
 export const dynamic = 'force-dynamic'
 
 const FONT_FAMILIES: Record<'sans' | 'serif' | 'mono', string> = {
-  sans: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  sans: 'var(--font-geist-sans), \'Inter\', -apple-system, system-ui, sans-serif',
   serif: 'ui-serif, Georgia, "Times New Roman", serif',
-  mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+  mono: 'var(--font-geist-mono), \'JetBrains Mono\', ui-monospace, monospace',
 }
 
 function stripHtml(s: string): string {
@@ -24,20 +32,25 @@ function stripHtml(s: string): string {
     .replace(/&gt;/g, '>')
 }
 
-function previewOf(note: { title: string; content: string }) {
+function titleOf(note: { title: string; content: string }): string {
   if (note.title.trim()) return note.title
   const text = stripHtml(note.content)
   const firstLine = text.split('\n').find((l) => l.trim()) ?? ''
   return firstLine.trim() || 'Untitled'
 }
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
+function snippetOf(note: { title: string; content: string }): string {
+  const text = stripHtml(note.content).replace(/\s+/g, ' ').trim()
+  if (!text) return ''
+  if (!note.title.trim()) {
+    const firstLine = stripHtml(note.content).split('\n').find((l) => l.trim()) ?? ''
+    const idx = text.indexOf(firstLine.trim())
+    if (idx >= 0) {
+      const rest = text.slice(idx + firstLine.trim().length).trim()
+      return rest.slice(0, 140)
+    }
+  }
+  return text.slice(0, 140)
 }
 
 export default async function NotesPage() {
@@ -50,76 +63,67 @@ export default async function NotesPage() {
   }
 
   return (
-    <main
-      className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-6 py-10"
-      style={wrapperStyle}
-    >
-      <header className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/"
-            className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-          >
-            ← Hub
-          </Link>
-          <h1 className="text-2xl font-semibold tracking-tight">Notes</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/notes/trash"
-            className="rounded-md border border-black/15 px-3 py-1.5 text-sm hover:bg-black/5 dark:border-white/15 dark:hover:bg-white/10"
-          >
-            Trash
-          </Link>
-          <NotesSettingsButton initial={settings} />
-          <form action={createNoteAction}>
-            <button
-              type="submit"
-              className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-black/80 dark:bg-white dark:text-black dark:hover:bg-white/80"
-            >
-              New note
-            </button>
-          </form>
-        </div>
-      </header>
+    <div className="notes-app">
+      <main className="container" style={wrapperStyle}>
+        <header className="page-head">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Link href="/" className="crumb">← Hub</Link>
+            <h1>Notes</h1>
+          </div>
+          <div className="actions">
+            <Link href="/notes/trash" className="btn">Trash</Link>
+            <NotesSettingsButton initial={settings} />
+            <form action={createNoteAction}>
+              <button type="submit" className="btn primary">New note</button>
+            </form>
+          </div>
+        </header>
 
-      {notes.length === 0 ? (
-        <p className="text-sm text-zinc-500">
-          No notes yet. Click <em>New note</em> to create one.
-        </p>
-      ) : (
-        <ul className="flex flex-col divide-y divide-black/10 rounded-md border border-black/10 dark:divide-white/10 dark:border-white/10">
-          {notes.map((note) => (
-            <li
-              key={note.id}
-              className="flex items-center justify-between gap-3 px-4 py-3"
-            >
-              <Link
-                href={`/notes/${note.id}`}
-                className="flex min-w-0 flex-1 flex-col gap-0.5"
-              >
-                <span className="truncate text-sm font-medium">
-                  {previewOf(note)}
-                </span>
-                <span className="text-xs text-zinc-500">
-                  {formatDate(note.updated_at)}
-                </span>
-              </Link>
-              <form action={deleteNoteAction}>
-                <input type="hidden" name="id" value={note.id} />
-                <button
-                  type="submit"
-                  className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-black/5 hover:text-red-600 dark:hover:bg-white/10 dark:hover:text-red-400"
-                  aria-label="Move to trash"
-                  title="Move to trash (auto-deletes in 30 days)"
-                >
-                  Trash
-                </button>
-              </form>
-            </li>
-          ))}
-        </ul>
-      )}
-    </main>
+        {notes.length === 0 ? (
+          <div className="empty">
+            No notes yet. Click <em>New note</em> to create one.
+          </div>
+        ) : (
+          <ul className="note-list">
+            {notes.map((note) => {
+              const isPinned = !!note.pinned_at
+              const snippet = snippetOf(note)
+              return (
+                <li key={note.id} className="note-row">
+                  <Link href={`/notes/${note.id}`} className="note-link">
+                    <span className="note-title">
+                      {isPinned && <span className="pin" aria-hidden title="Pinned">📌</span>}
+                      <span className="label">{titleOf(note)}</span>
+                    </span>
+                    {snippet && <span className="note-snippet">{snippet}</span>}
+                    <span className="note-meta">
+                      <LocalTime iso={note.updated_at} />
+                    </span>
+                  </Link>
+                  <div className="note-actions">
+                    <form action={isPinned ? unpinNoteAction : pinNoteAction}>
+                      <input type="hidden" name="id" value={note.id} />
+                      <button type="submit" className="row-btn" title={isPinned ? 'Unpin' : 'Pin to top'}>
+                        {isPinned ? 'Unpin' : 'Pin'}
+                      </button>
+                    </form>
+                    <ConfirmForm action={deleteNoteAction} message="Move this note to trash?">
+                      <input type="hidden" name="id" value={note.id} />
+                      <button
+                        type="submit"
+                        className="row-btn danger"
+                        title="Move to trash (auto-deletes in 30 days)"
+                      >
+                        Trash
+                      </button>
+                    </ConfirmForm>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </main>
+    </div>
   )
 }

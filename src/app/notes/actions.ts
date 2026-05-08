@@ -4,10 +4,12 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import {
   createNote as dbCreateNote,
+  pinNote as dbPinNote,
   purgeNote as dbPurgeNote,
   restoreNote as dbRestoreNote,
   saveNotesSettings as dbSaveNotesSettings,
   softDeleteNote as dbSoftDeleteNote,
+  unpinNote as dbUnpinNote,
   updateNote as dbUpdateNote,
   type NotesSettings,
 } from '@/lib/db'
@@ -44,6 +46,22 @@ export async function purgeNoteAction(formData: FormData) {
   if (typeof id !== 'string') return
   await dbPurgeNote(id)
   revalidatePath('/notes/trash')
+}
+
+export async function pinNoteAction(formData: FormData) {
+  await requireSession()
+  const id = formData.get('id')
+  if (typeof id !== 'string') return
+  await dbPinNote(id)
+  revalidatePath('/notes')
+}
+
+export async function unpinNoteAction(formData: FormData) {
+  await requireSession()
+  const id = formData.get('id')
+  if (typeof id !== 'string') return
+  await dbUnpinNote(id)
+  revalidatePath('/notes')
 }
 
 export async function saveNoteAction(

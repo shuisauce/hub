@@ -2,14 +2,15 @@ import { notFound } from 'next/navigation'
 import { getNote, loadNotesSettings } from '@/lib/db'
 import { requireSession } from '@/lib/session'
 import { Editor } from './editor'
+import '../notes.css'
 
 export const metadata = { title: 'Edit note' }
 export const dynamic = 'force-dynamic'
 
 const FONT_FAMILIES: Record<'sans' | 'serif' | 'mono', string> = {
-  sans: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  sans: 'var(--font-geist-sans), \'Inter\', -apple-system, system-ui, sans-serif',
   serif: 'ui-serif, Georgia, "Times New Roman", serif',
-  mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+  mono: 'var(--font-geist-mono), \'JetBrains Mono\', ui-monospace, monospace',
 }
 
 export default async function NotePage({
@@ -28,11 +29,10 @@ export default async function NotePage({
   }
 
   return (
-    <main
-      className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-6 py-10"
-      style={wrapperStyle}
-    >
-      <Editor note={note} fontSize={settings.fontSize} />
-    </main>
+    <div className="notes-app">
+      <main className="container" style={wrapperStyle}>
+        <Editor note={note} fontSize={settings.fontSize} />
+      </main>
+    </div>
   )
 }

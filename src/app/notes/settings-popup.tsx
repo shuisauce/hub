@@ -58,90 +58,66 @@ export function NotesSettingsPopup({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-30 flex items-center justify-center bg-black/30 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-sm rounded-lg border border-black/10 bg-white p-5 shadow-lg dark:border-white/10 dark:bg-zinc-900"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Settings</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-          >
-            Close
-          </button>
-        </header>
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h2>Settings</h2>
+          <button type="button" onClick={onClose} className="iconbtn" title="Close">✕</button>
+        </div>
 
-        <section className="mb-5">
-          <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-zinc-500">
-            Theme
-          </label>
-          <div className="flex gap-1 rounded-md border border-black/10 p-1 dark:border-white/10">
-            {(['system', 'light', 'dark'] as Theme[]).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => changeTheme(t)}
-                className={
-                  'flex-1 rounded px-2 py-1 text-sm font-medium transition-colors ' +
-                  (theme === t
-                    ? 'bg-black text-white dark:bg-white dark:text-black'
-                    : 'text-zinc-500 hover:bg-black/5 dark:hover:bg-white/10')
-                }
-              >
-                {t.charAt(0).toUpperCase() + t.slice(1)}
-              </button>
-            ))}
-          </div>
-        </section>
+        <div className="modal-body">
+          <section className="modal-section">
+            <span className="modal-label">Theme</span>
+            <div className="seg">
+              {(['system', 'light', 'dark'] as Theme[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => changeTheme(t)}
+                  className={theme === t ? 'active' : ''}
+                >
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </button>
+              ))}
+            </div>
+          </section>
 
-        <section className="mb-5">
-          <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-zinc-500">
-            Font
-          </label>
-          <div className="flex gap-1 rounded-md border border-black/10 p-1 dark:border-white/10">
-            {(['sans', 'serif', 'mono'] as const).map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => changeSettings({ ...settings, fontFamily: f })}
-                className={
-                  'flex-1 rounded px-2 py-1 text-sm font-medium transition-colors ' +
-                  (settings.fontFamily === f
-                    ? 'bg-black text-white dark:bg-white dark:text-black'
-                    : 'text-zinc-500 hover:bg-black/5 dark:hover:bg-white/10')
-                }
-              >
-                {f.charAt(0).toUpperCase() + f.slice(1)}
-              </button>
-            ))}
-          </div>
-        </section>
+          <section className="modal-section">
+            <span className="modal-label">Font</span>
+            <div className="seg">
+              {(['sans', 'serif', 'mono'] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => changeSettings({ ...settings, fontFamily: f })}
+                  className={settings.fontFamily === f ? 'active' : ''}
+                >
+                  {f.charAt(0).toUpperCase() + f.slice(1)}
+                </button>
+              ))}
+            </div>
+          </section>
 
-        <section>
-          <div className="mb-2 flex items-baseline justify-between">
-            <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-              Text size
-            </label>
-            <span className="text-xs text-zinc-500">{settings.fontSize}px</span>
-          </div>
-          <input
-            type="range"
-            min={12}
-            max={28}
-            step={1}
-            value={settings.fontSize}
-            onChange={(e) =>
-              changeSettings({ ...settings, fontSize: Number(e.target.value) })
-            }
-            className="w-full"
-          />
-        </section>
+          <section className="modal-section">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+              <span className="modal-label" style={{ marginBottom: 0 }}>Text size</span>
+              <span style={{ fontSize: 12, color: 'var(--ink-3)', fontFamily: 'var(--font-geist-mono), ui-monospace, monospace' }}>
+                {settings.fontSize}px
+              </span>
+            </div>
+            <input
+              type="range"
+              min={12}
+              max={28}
+              step={1}
+              value={settings.fontSize}
+              onChange={(e) =>
+                changeSettings({ ...settings, fontSize: Number(e.target.value) })
+              }
+              style={{ width: '100%' }}
+            />
+          </section>
+        </div>
       </div>
     </div>
   )
@@ -151,11 +127,7 @@ export function NotesSettingsButton({ initial }: { initial: NotesSettings }) {
   const [open, setOpen] = useState(false)
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="rounded-md border border-black/15 px-3 py-1.5 text-sm hover:bg-black/5 dark:border-white/15 dark:hover:bg-white/10"
-      >
+      <button type="button" onClick={() => setOpen(true)} className="btn">
         Settings
       </button>
       {open && <NotesSettingsPopup initial={initial} onClose={() => setOpen(false)} />}

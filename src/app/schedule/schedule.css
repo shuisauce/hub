@@ -222,7 +222,7 @@
 .schedule-app .chip.oc::before { content: '· '; opacity: 0.5; }
 .schedule-app .shift-card .h { font-family: 'JetBrains Mono', monospace; }
 .schedule-app .shift-card .amt { margin-left: auto; opacity: 0.7; font-weight: 500; }
-.schedule-app .pace-dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
+.schedule-app .pace-dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; margin-left: 4px; }
 .schedule-app .pace-dot[data-status="ahead"] { background: var(--positive); }
 .schedule-app .pace-dot[data-status="behind"] { background: var(--accent); }
 
@@ -326,7 +326,13 @@
   }
   .schedule-app .shift-card .hosp-short { display: none; }
   .schedule-app .shift-card .amt { display: none; }
+  /* Hide status emoji and pace dots on mobile — hours take priority */
+  .schedule-app .shift-card .status-mark { display: none; }
+  .schedule-app .shift-card .pace-dot { display: none; }
   .schedule-app .shift-card .h { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Hide the Mark (status paint) group from the toolbar on mobile */
+  .schedule-app .mark-paint { display: none !important; }
+  .schedule-app .mark-paint + .divider { display: none; }
   .schedule-app .shift-card .reason { font-size: 9px; }
 
   /* OFF / NL cards — keep label readable; reason already truncates */

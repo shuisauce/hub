@@ -1,0 +1,428 @@
+/* Notes — palette + utility classes that mirror the schedule's design system */
+.notes-app {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+
+  --bg: #fafaf7;
+  --surface: #ffffff;
+  --surface-2: #f5f4f0;
+  --border: #e7e5df;
+  --border-strong: #d6d3cb;
+  --ink: #1c1c1a;
+  --ink-2: #4a4945;
+  --ink-3: #8a887f;
+  --ink-4: #b8b6ad;
+  --accent: #ea580c;
+  --warn: #dc2626;
+  --positive: #16a34a;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.04);
+
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), 'Inter', -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+html.dark .notes-app {
+  --bg: #15151a;
+  --surface: #1d1d24;
+  --surface-2: #25252e;
+  --border: #2c2c36;
+  --border-strong: #3a3a46;
+  --ink: #f0efeb;
+  --ink-2: #c8c7c0;
+  --ink-3: #898880;
+  --ink-4: #5a5953;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not(.light):not(.dark) .notes-app {
+    --bg: #15151a;
+    --surface: #1d1d24;
+    --surface-2: #25252e;
+    --border: #2c2c36;
+    --border-strong: #3a3a46;
+    --ink: #f0efeb;
+    --ink-2: #c8c7c0;
+    --ink-3: #898880;
+    --ink-4: #5a5953;
+  }
+}
+
+.notes-app .mono {
+  font-family: var(--font-geist-mono), 'JetBrains Mono', ui-monospace, monospace;
+  font-feature-settings: 'tnum' on;
+}
+
+/* Page layout */
+.notes-app .container {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1;
+}
+
+.notes-app .page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.notes-app .page-head h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.notes-app .page-head .actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.notes-app .crumb {
+  font-size: 13px;
+  color: var(--ink-3);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.notes-app .crumb:hover { color: var(--ink); }
+
+/* Buttons — match schedule's btn/iconbtn */
+.notes-app button { font-family: inherit; cursor: pointer; }
+
+.notes-app .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  text-decoration: none;
+  line-height: 1;
+}
+.notes-app .btn:hover { background: var(--surface-2); color: var(--ink); }
+.notes-app .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.notes-app .btn.primary {
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
+}
+.notes-app .btn.primary:hover { background: var(--ink-2); border-color: var(--ink-2); }
+.notes-app .btn.ghost { background: transparent; border-color: transparent; color: var(--ink-3); }
+.notes-app .btn.ghost:hover { background: var(--surface-2); color: var(--ink); }
+.notes-app .btn.danger { color: var(--warn); }
+.notes-app .btn.danger:hover { background: color-mix(in srgb, var(--warn) 12%, transparent); }
+
+.notes-app .iconbtn {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  color: var(--ink-3);
+  background: transparent;
+  border: none;
+  transition: background 0.12s, color 0.12s;
+}
+.notes-app .iconbtn:hover { background: var(--surface-2); color: var(--ink); }
+
+/* Inputs */
+.notes-app .input {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--ink);
+  outline: none;
+  width: 100%;
+}
+.notes-app .input:focus { border-color: var(--ink-3); }
+
+/* Note list */
+.notes-app .note-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.notes-app .note-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  transition: background 0.12s;
+}
+.notes-app .note-row:last-child { border-bottom: none; }
+.notes-app .note-row:hover { background: var(--surface-2); }
+
+.notes-app .note-link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.notes-app .note-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-app .note-title .pin {
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+.notes-app .note-title .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-app .note-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+.notes-app .note-meta {
+  font-size: 11px;
+  color: var(--ink-4);
+  font-family: var(--font-geist-mono), 'JetBrains Mono', ui-monospace, monospace;
+  letter-spacing: 0.02em;
+}
+
+.notes-app .note-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.notes-app .note-actions form { display: inline-flex; }
+
+.notes-app .row-btn {
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+  background: transparent;
+  border: none;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.notes-app .row-btn:hover { background: var(--surface); color: var(--ink); }
+.notes-app .row-btn.danger:hover { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
+
+/* Empty state */
+.notes-app .empty {
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--ink-3);
+  font-size: 14px;
+}
+
+/* Editor surface */
+.notes-app .editor-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.notes-app .editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notes-app .editor-status {
+  font-size: 11px;
+  color: var(--ink-3);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  letter-spacing: 0.02em;
+}
+.notes-app .editor-status.error { color: var(--warn); }
+
+.notes-app .editor-title {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  font-family: inherit;
+  padding: 0;
+}
+.notes-app .editor-title::placeholder { color: var(--ink-4); }
+
+/* Editor toolbar */
+.notes-app .editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+
+.notes-app .editor-toolbar .tb-btn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  background: transparent;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s;
+}
+.notes-app .editor-toolbar .tb-btn:hover { background: var(--surface); color: var(--ink); }
+.notes-app .editor-toolbar .tb-btn.active { background: var(--ink); color: var(--surface); }
+.notes-app .editor-toolbar .tb-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.notes-app .editor-toolbar .tb-divider { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+.notes-app .editor-toolbar .tb-status {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+.notes-app .editor-toolbar .tb-status.error { color: var(--warn); }
+
+/* Settings popup overlay (unchanged behavior; matched colors) */
+.notes-app .modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 20, 18, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+  backdrop-filter: blur(2px);
+}
+.notes-app .modal {
+  width: 100%;
+  max-width: 420px;
+  margin: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.notes-app .modal-head {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.notes-app .modal-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+.notes-app .modal-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.notes-app .modal-section .modal-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.notes-app .seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  width: 100%;
+}
+.notes-app .seg button {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  font-family: inherit;
+  transition: background 0.1s, color 0.1s;
+}
+.notes-app .seg button:hover { background: var(--surface); color: var(--ink); }
+.notes-app .seg button.active {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+@media (max-width: 720px) {
+  .notes-app .container { padding: 20px 14px; gap: 16px; }
+  .notes-app .editor-title { font-size: 22px; }
+}

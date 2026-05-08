@@ -39,6 +39,55 @@ async function uploadImage(file: File): Promise<string> {
   return json.url
 }
 
+// Client-side image resize. Most pasted screenshots are way larger than the
+// note will ever display. Down-scaling before upload saves blob bandwidth and
+// keeps the note's image references small.
+const MAX_IMAGE_DIMENSION = 1600
+const JPEG_QUALITY = 0.85
+
+async function resizeImage(file: File): Promise<File> {
+  // Skip vector images and anything tiny enough not to matter.
+  if (file.type === 'image/svg+xml' || file.size < 200_000) return file
+  if (typeof document === 'undefined') return file
+
+  const dataUrl: string = await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error)
+    reader.onload = () => resolve(reader.result as string)
+    reader.readAsDataURL(file)
+  })
+
+  const img: HTMLImageElement = await new Promise((resolve, reject) => {
+    const el = new window.Image()
+    el.onload = () => resolve(el)
+    el.onerror = () => reject(new Error('Could not decode image'))
+    el.src = dataUrl
+  })
+
+  const longest = Math.max(img.naturalWidth, img.naturalHeight)
+  if (longest <= MAX_IMAGE_DIMENSION) return file
+
+  const ratio = MAX_IMAGE_DIMENSION / longest
+  const w = Math.round(img.naturalWidth * ratio)
+  const h = Math.round(img.naturalHeight * ratio)
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return file
+  ctx.imageSmoothingQuality = 'high'
+  ctx.drawImage(img, 0, 0, w, h)
+
+  const blob: Blob | null = await new Promise((resolve) => {
+    canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY)
+  })
+  if (!blob) return file
+  // If our re-encode is somehow bigger, keep the original.
+  if (blob.size >= file.size) return file
+  const baseName = file.name.replace(/\.[^.]+$/, '') || 'image'
+  return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' })
+}
+
 function ToolbarButton({
   onClick, active, disabled, title, children,
 }: {
@@ -54,12 +103,7 @@ function ToolbarButton({
       onClick={onClick}
       title={title}
       disabled={disabled}
-      className={
-        'min-w-[28px] rounded px-2 py-1 text-sm font-medium transition-colors disabled:opacity-40 ' +
-        (active
-          ? 'bg-black text-white dark:bg-white dark:text-black'
-          : 'text-zinc-700 hover:bg-black/5 dark:text-zinc-300 dark:hover:bg-white/10')
-      }
+      className={'tb-btn' + (active ? ' active' : '')}
     >
       {children}
     </button>
@@ -72,45 +116,51 @@ function Toolbar({
   editor: TiptapEditor | null
   uploadStatus: string | null
 }) {
-  if (!editor) return <div className="h-9" />
+  if (!editor) return <div style={{ height: 36 }} />
+  const isStatusError =
+    uploadStatus?.startsWith('Upload failed') ||
+    uploadStatus?.startsWith("Couldn't") ||
+    uploadStatus?.startsWith('Drag had')
   return (
-    <div className="sticky top-0 z-10 flex flex-wrap items-center gap-1 border-b border-black/10 bg-[var(--background)] px-1 py-1.5 dark:border-white/10">
+    <div className="editor-toolbar">
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleBold().run()}
         active={editor.isActive('bold')}
         title="Bold (⌘B)"
       >
-        <span className="font-bold">B</span>
+        <span style={{ fontWeight: 700 }}>B</span>
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleItalic().run()}
         active={editor.isActive('italic')}
         title="Italic (⌘I)"
       >
-        <span className="italic">I</span>
+        <span style={{ fontStyle: 'italic' }}>I</span>
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleUnderline().run()}
         active={editor.isActive('underline')}
         title="Underline (⌘U)"
       >
-        <span className="underline">U</span>
+        <span style={{ textDecoration: 'underline' }}>U</span>
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleStrike().run()}
         active={editor.isActive('strike')}
         title="Strikethrough"
       >
-        <span className="line-through">S</span>
+        <span style={{ textDecoration: 'line-through' }}>S</span>
       </ToolbarButton>
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleCode().run()}
         active={editor.isActive('code')}
         title="Inline code"
       >
-        <span className="font-mono text-xs">{'<>'}</span>
+        <span style={{ fontFamily: 'var(--font-geist-mono), ui-monospace, monospace', fontSize: 11 }}>
+          {'<>'}
+        </span>
       </ToolbarButton>
-      <span className="mx-1 h-5 w-px bg-black/10 dark:bg-white/10" />
+      <span className="tb-divider" />
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
         active={editor.isActive('heading', { level: 1 })}
@@ -146,7 +196,7 @@ function Toolbar({
       >
         &ldquo;
       </ToolbarButton>
-      <span className="mx-1 h-5 w-px bg-black/10 dark:bg-white/10" />
+      <span className="tb-divider" />
       <ToolbarButton
         onClick={() => editor.chain().focus().undo().run()}
         disabled={!editor.can().undo()}
@@ -162,18 +212,7 @@ function Toolbar({
         ↷
       </ToolbarButton>
       {uploadStatus && (
-        <span
-          className={
-            'ml-auto text-xs ' +
-            (uploadStatus.startsWith('Upload failed') ||
-            uploadStatus.startsWith("Couldn't") ||
-            uploadStatus.startsWith('Drag had')
-              ? 'text-red-600 dark:text-red-400'
-              : 'text-zinc-500')
-          }
-        >
-          {uploadStatus}
-        </span>
+        <span className={'tb-status' + (isStatusError ? ' error' : '')}>{uploadStatus}</span>
       )}
     </div>
   )
@@ -284,10 +323,12 @@ export function Editor({ note, fontSize }: { note: Note; fontSize: number }) {
 
   async function handleImageUpload(file: File) {
     if (!editor) return
-    setUploadStatus(`Uploading ${file.name || 'image'}…`)
+    setUploadStatus(`Resizing ${file.name || 'image'}…`)
     try {
-      const url = await uploadImage(file)
-      editor.chain().focus().setImage({ src: url, alt: file.name }).run()
+      const resized = await resizeImage(file).catch(() => file)
+      setUploadStatus(`Uploading ${resized.name}…`)
+      const url = await uploadImage(resized)
+      editor.chain().focus().setImage({ src: url, alt: resized.name }).run()
       setUploadStatus(null)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Upload failed'
@@ -380,38 +421,26 @@ export function Editor({ note, fontSize }: { note: Note; fontSize: number }) {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={backToList}
-          className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-        >
+    <div className="editor-shell">
+      <div className="editor-head">
+        <button type="button" onClick={backToList} className="crumb">
           ← All notes
         </button>
-        <span
-          className={
-            status === 'error'
-              ? 'text-xs text-red-600 dark:text-red-400'
-              : 'text-xs text-zinc-500'
-          }
-        >
-          {label}
-        </span>
+        <span className={'editor-status' + (status === 'error' ? ' error' : '')}>{label}</span>
       </div>
 
       <input
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder="Title"
-        className="w-full bg-transparent font-semibold tracking-tight outline-none placeholder:text-zinc-400"
+        className="editor-title"
         style={{ fontSize: `${Math.round(fontSize * 1.5)}px` }}
       />
 
       <Toolbar editor={editor} uploadStatus={uploadStatus} />
 
-      <div className="flex-1 min-h-0">
-        <EditorContent editor={editor} className="tiptap-wrapper h-full" />
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <EditorContent editor={editor} className="tiptap-wrapper" style={{ height: '100%' }} />
       </div>
     </div>
   )

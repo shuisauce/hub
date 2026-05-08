@@ -8,6 +8,7 @@ export type Note = {
   created_at: string
   updated_at: string
   deleted_at?: string | null
+  pinned_at?: string | null
 }
 
 export type NotesSettings = {
@@ -44,6 +45,7 @@ function ensureSchema() {
         )
       `
       await sql`ALTER TABLE notes ADD COLUMN IF NOT EXISTS deleted_at timestamptz`
+      await sql`ALTER TABLE notes ADD COLUMN IF NOT EXISTS pinned_at timestamptz`
       await sql`CREATE INDEX IF NOT EXISTS notes_deleted_at_idx ON notes(deleted_at)`
       await sql`
         CREATE TABLE IF NOT EXISTS notes_settings (
@@ -70,10 +72,10 @@ async function purgeExpiredTrash() {
 export async function listNotes(): Promise<Note[]> {
   await ensureSchema()
   const rows = (await getSql()`
-    SELECT id, title, content, created_at, updated_at
+    SELECT id, title, content, created_at, updated_at, pinned_at
     FROM notes
     WHERE deleted_at IS NULL
-    ORDER BY updated_at DESC
+    ORDER BY pinned_at DESC NULLS LAST, updated_at DESC
   `) as Note[]
   return rows
 }
@@ -135,6 +137,16 @@ export async function restoreNote(id: string): Promise<void> {
 export async function purgeNote(id: string): Promise<void> {
   await ensureSchema()
   await getSql()`DELETE FROM notes WHERE id = ${id}`
+}
+
+export async function pinNote(id: string): Promise<void> {
+  await ensureSchema()
+  await getSql()`UPDATE notes SET pinned_at = now() WHERE id = ${id} AND deleted_at IS NULL`
+}
+
+export async function unpinNote(id: string): Promise<void> {
+  await ensureSchema()
+  await getSql()`UPDATE notes SET pinned_at = NULL WHERE id = ${id}`
 }
 
 export async function loadNotesSettings(): Promise<NotesSettings> {

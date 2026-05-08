@@ -720,21 +720,10 @@ function Drawer({
 
   const projected = earnedYTD + futureGross
   const remaining = Math.max(0, annualGoal - projected)
-  const cushion = projected - annualGoal
 
-  // Average shift gross — used when behind to estimate "shifts to hit goal."
-  const avgShiftGross =
-    paidShiftCount > 0
-      ? paidShiftGross / paidShiftCount
-      : (Object.values(lookup).reduce((m, h) => Math.max(m, h.rate), 0) || 233) * 12
-
-  // Day-off check — only 8h (sometimes 10h) shifts get offered off, never 12h.
-  // The dayOffRate setting is what one offered-off hour pays; 8h × that rate
-  // is the per-day cost of taking one off.
+  // Day-off check uses the dayOffRate setting; 8h × that rate is the per-day cost.
   const safeDayOffRate = dayOffRate > 0 ? dayOffRate : 190
   const dayOffCost = safeDayOffRate * 8
-  const daysOffAvailable = cushion > 0 && dayOffCost > 0 ? Math.floor(cushion / dayOffCost) : 0
-  const shiftsShort = cushion < 0 && avgShiftGross > 0 ? Math.ceil(-cushion / avgShiftGross) : 0
 
   // W2 comparison: only count the period actually covered by your schedule —
   // Jan 1 through the last scheduled future shift (or today if you have no
@@ -794,30 +783,46 @@ function Drawer({
           </div>
         </div>
         <div className="drawer-card">
-          <div className="lbl">Day off check</div>
-          {cushion >= dayOffCost ? (
-            <>
-              <div className="val mono" style={{ color: 'var(--positive)' }}>
-                ✓ {daysOffAvailable} {daysOffAvailable === 1 ? 'day' : 'days'}
-              </div>
-              <div className="sub">8h × ${safeDayOffRate}/hr · +{fmtMoneyShort(cushion)} cushion</div>
-              <div className="delta ahead">Can drop up to {daysOffAvailable} 8h shift{daysOffAvailable === 1 ? '' : 's'}</div>
-            </>
-          ) : cushion >= 0 ? (
-            <>
-              <div className="val mono">On track</div>
-              <div className="sub">+{fmtMoneyShort(cushion)} over goal · less than one 8h shift of cushion</div>
-              <div className="delta ahead">No room to drop a shift yet</div>
-            </>
-          ) : (
-            <>
-              <div className="val mono" style={{ color: 'var(--accent)' }}>
-                ✗ −{fmtMoneyShort(-cushion)}
-              </div>
-              <div className="sub">~{fmtMoneyShort(avgShiftGross)} per avg shift</div>
-              <div className="delta behind">Add ~{shiftsShort} shift{shiftsShort === 1 ? '' : 's'} to hit goal</div>
-            </>
-          )}
+          <div className="lbl">Can I take tomorrow off?</div>
+          {(() => {
+            // Pace-relative balance: where am I RIGHT NOW vs where I should be?
+            // Answer in 8h-shift units so the count maps directly to "days off".
+            const ytdShiftBalance = dayOffCost > 0 ? (earnedYTD - expected) / dayOffCost : 0
+            const aheadCount = Math.floor(ytdShiftBalance)
+            const behindCount = Math.ceil(-ytdShiftBalance)
+            const cushionVsPace = earnedYTD - expected
+            if (ytdShiftBalance >= 1) {
+              return (
+                <>
+                  <div className="val mono" style={{ color: 'var(--positive)' }}>
+                    ✓ +{aheadCount} shift{aheadCount === 1 ? '' : 's'}
+                  </div>
+                  <div className="sub">+{fmtMoneyShort(cushionVsPace)} vs today&rsquo;s pace · 8h × ${safeDayOffRate}/hr</div>
+                  <div className="delta ahead">Yes — you can take tomorrow off</div>
+                </>
+              )
+            }
+            if (ytdShiftBalance > -1) {
+              return (
+                <>
+                  <div className="val mono">On pace</div>
+                  <div className="sub">
+                    {cushionVsPace >= 0 ? '+' : '−'}{fmtMoneyShort(Math.abs(cushionVsPace))} vs today&rsquo;s pace · within one shift
+                  </div>
+                  <div className="delta">Cutting it close — depends on what&rsquo;s already booked</div>
+                </>
+              )
+            }
+            return (
+              <>
+                <div className="val mono" style={{ color: 'var(--accent)' }}>
+                  ✗ −{behindCount} shift{behindCount === 1 ? '' : 's'}
+                </div>
+                <div className="sub">−{fmtMoneyShort(-cushionVsPace)} vs today&rsquo;s pace · 8h × ${safeDayOffRate}/hr</div>
+                <div className="delta behind">No — you&rsquo;re behind, don&rsquo;t skip a shift</div>
+              </>
+            )
+          })()}
         </div>
       </div>
     </div>
@@ -930,18 +935,20 @@ function PaintToolbar({
         </div>
       )}
       <span style={{ flex: 1 }} />
-      <span className="label" style={{ marginLeft: 4 }}>Mark</span>
-      <div className="chip-group" title="Status paint — drag across days to mark them all at once">
-        {STATUSES.map((s) => (
-          <button
-            key={s}
-            className={'chip' + (statusArmed(s) ? ' active' : '')}
-            onClick={() => toggleStatus(s)}
-            title={STATUS_LABELS[s]}
-          >
-            {STATUS_EMOJI[s]}
-          </button>
-        ))}
+      <div className="mark-paint" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <span className="label">Mark</span>
+        <div className="chip-group" title="Status paint — drag across days to mark them all at once">
+          {STATUSES.map((s) => (
+            <button
+              key={s}
+              className={'chip' + (statusArmed(s) ? ' active' : '')}
+              onClick={() => toggleStatus(s)}
+              title={STATUS_LABELS[s]}
+            >
+              {STATUS_EMOJI[s]}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="divider" />
       <button
@@ -1033,6 +1040,9 @@ function DayCell({
         style={style}
       >
         {!asOverlay && renderStatusMark(status)}
+        <span className="h">{s.label || `${s.h}h`}</span>
+        <span className="hosp-short">{h.short}</span>
+        <span className="amt mono">{isOc ? 'on-call' : fmtMoneyShort(shiftAmount(s, lookup))}</span>
         {showDot && (
           <span
             className="pace-dot"
@@ -1040,9 +1050,6 @@ function DayCell({
             title={`After this shift: ${fmtMoney(paceInfo!.cum)} · pace target ${fmtMoney(paceInfo!.expected)} (${paceInfo!.cum >= paceInfo!.expected ? '+' : '−'}${fmtMoney(Math.abs(paceInfo!.cum - paceInfo!.expected))})`}
           />
         )}
-        <span className="h">{s.label || `${s.h}h`}</span>
-        <span className="hosp-short">{h.short}</span>
-        <span className="amt mono">{isOc ? 'on-call' : fmtMoneyShort(shiftAmount(s, lookup))}</span>
       </div>
     )
   }
