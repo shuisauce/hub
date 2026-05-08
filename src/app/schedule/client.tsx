@@ -253,6 +253,14 @@ function normalizeStatus(raw: unknown): ShiftStatus {
   return 'planned'
 }
 
+// Past dates are automatically considered posted, regardless of stored status.
+// (Once a shift's date is yesterday or earlier, it either happened or didn't —
+// the saved approval state is no longer meaningful.)
+function effectiveStatus(raw: unknown, dateKey: string, today: string): ShiftStatus {
+  if (dateKey < today) return 'posted'
+  return normalizeStatus(raw)
+}
+
 function renderStatusMark(status: ShiftStatus): ReactElement {
   return (
     <span className="status-mark" title={STATUS_LABELS[status]}>
@@ -311,6 +319,7 @@ type CsvAudience = 'personal' | 'work'
 
 function exportCSV(schedule: Schedule, settings: ScheduleSettings, audience: CsvAudience = 'personal') {
   if (audience === 'work') return exportWorkCSV(schedule, settings)
+  const today = todayKey()
   const lookup = makeHospLookup(settings.hospitals)
   const rows: (string | number)[][] = [
     ['Date', 'Day', 'Type', 'Hospital', 'Hospital ID', 'Hours', 'Label', 'Rate', 'Gross', 'On-call', 'No Late', 'No-Late reason', 'Status'],
@@ -346,7 +355,12 @@ function exportCSV(schedule: Schedule, settings: ScheduleSettings, audience: Csv
     const s = schedule[k]
     if (!s) return
     const nlLabel = s.hosp === 'NL' ? (s.noLateLabel ?? '') : (s.noLate ? (s.noLateLabel ?? '') : '')
-    const status = normalizeStatus(s.status)
+    // OFF and standalone No-Late entries don't carry status; everything else
+    // gets "posted" automatically once it's in the past.
+    const status =
+      s.hosp === 'OFF' || s.hosp === 'NL'
+        ? ''
+        : effectiveStatus(s.status, k, today)
     emit(k, s, false, !!s.noLate || s.hosp === 'NL', nlLabel, status)
     if (s.ocOverlay) emit(k, { hosp: s.ocOverlay.hosp, h: s.ocOverlay.h, label: s.ocOverlay.label }, true, false, '', status)
   })
@@ -400,6 +414,7 @@ function icsEscape(s: string | null | undefined): string {
 }
 
 function exportICS(schedule: Schedule, settings: ScheduleSettings) {
+  const today = todayKey()
   const lookup = makeHospLookup(settings.hospitals)
   const opts = settings.hourOptions
   const findTpl = (label: string | undefined | null) =>
@@ -468,8 +483,11 @@ function exportICS(schedule: Schedule, settings: ScheduleSettings) {
       dtStart = 'DTSTART;TZID=America/Detroit:' + startStr
       dtEnd = 'DTEND;TZID=America/Detroit:' + endStr
     }
-    const normStatus = normalizeStatus(s.status)
-    const statusLabel = normStatus === 'planned' ? '' : ` · ${normStatus.charAt(0).toUpperCase() + normStatus.slice(1)}`
+    // OFF / NL don't carry status; paid shifts auto-promote to "posted" in the past.
+    const showStatus = !isOff && !isNL
+    const eff = showStatus ? effectiveStatus(s.status, key, today) : 'planned'
+    const statusLabel =
+      !showStatus || eff === 'planned' ? '' : ` · ${eff.charAt(0).toUpperCase() + eff.slice(1)}`
     const desc = (isOff
       ? (s.label ? `Unavailable — ${s.label}` : 'Unavailable')
       : isNL
@@ -934,11 +952,9 @@ function DayCell({
   if (isFirstOfMonth) cls.push('first-of-month')
 
   const renderShiftCard = (s: ShiftEntry, asOverlay = false): ReactElement | null => {
-    const status = normalizeStatus(s.status)
     if (s.hosp === 'OFF') {
       return (
         <div key="off" className="shift-card OFF">
-          {renderStatusMark(status)}
           <span>OFF</span>
           {s.label && <span className="reason">· {s.label}</span>}
         </div>
@@ -947,12 +963,12 @@ function DayCell({
     if (s.hosp === 'NL') {
       return (
         <div key="nl" className="shift-card NL">
-          {renderStatusMark(status)}
           <span>NO LATE</span>
           {s.noLateLabel && <span className="reason">· {s.noLateLabel}</span>}
         </div>
       )
     }
+    const status = effectiveStatus(s.status, k, today)
     const h = lookup[s.hosp]
     if (!h) return null
     const isOc = !!s.oc || asOverlay
@@ -1343,7 +1359,6 @@ function OffReasonPopup({
   onClose: () => void
 }) {
   const [reason, setReason] = useState(existing.label ?? '')
-  const [status, setStatus] = useState<ShiftStatus>(normalizeStatus(existing.status))
   const [applyToRange, setApplyToRange] = useState(stretch.length > 1)
 
   const save = () => {
@@ -1354,7 +1369,6 @@ function OffReasonPopup({
     }
     const next: ShiftEntry = { hosp: 'OFF', h: 0 }
     if (trimmed) next.label = trimmed
-    if (status !== 'planned') next.status = status
     onSave(next)
   }
 
@@ -1401,7 +1415,6 @@ function OffReasonPopup({
               </label>
             </div>
           )}
-          <StatusSelector value={status} onChange={setStatus} />
         </div>
         <div className="popup-foot">
           <button className="btn danger" onClick={onDelete}><Icon name="trash" size={12} /> Clear OFF</button>
@@ -1426,12 +1439,10 @@ function NoLateReasonPopup({
   onClose: () => void
 }) {
   const [reason, setReason] = useState(existing.noLateLabel ?? '')
-  const [status, setStatus] = useState<ShiftStatus>(normalizeStatus(existing.status))
 
   const save = () => {
     const next: ShiftEntry = { hosp: 'NL', h: 0 }
     if (reason.trim()) next.noLateLabel = reason.trim()
-    if (status !== 'planned') next.status = status
     onSave(next)
   }
 
@@ -1456,7 +1467,6 @@ function NoLateReasonPopup({
               style={{ height: 38, fontSize: 14 }}
             />
           </div>
-          <StatusSelector value={status} onChange={setStatus} />
         </div>
         <div className="popup-foot">
           <button className="btn danger" onClick={onDelete}><Icon name="trash" size={12} /> Clear</button>
@@ -1997,6 +2007,10 @@ export function ScheduleClient({
     if (p.hosp === 'STATUS') {
       const ex = cur[key]
       if (!ex) return false
+      // Status only applies to paid shifts. OFF and No-Late don't carry an
+      // approval state — let drag-paints skip them so you can swipe across a
+      // mixed week without trampling the markers.
+      if (ex.hosp === 'OFF' || ex.hosp === 'NL') return false
       const target = p.statusValue ?? 'planned'
       const currentStatus = normalizeStatus(ex.status)
       if (currentStatus === target) return false

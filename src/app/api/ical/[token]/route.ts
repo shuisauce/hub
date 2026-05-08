@@ -57,12 +57,19 @@ export async function GET(
 
   const cal = ical({ name: 'Schedule', timezone: 'America/New_York' })
 
+  const todayDate = new Date()
+  const todayIso = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`
+
   const dates = Object.keys(schedule).sort()
   for (const date of dates) {
     const entry = schedule[date]
     if (!entry) continue
-    const status = entry.status ?? 'planned'
-    const statusLabel = status === 'planned' ? '' : ` · ${status.charAt(0).toUpperCase() + status.slice(1)}`
+    const isOffOrNl = entry.hosp === 'OFF' || entry.hosp === 'NL'
+    const rawStatus = (entry.status as unknown as string | undefined) ?? 'planned'
+    // Past paid shifts auto-promote to "posted". OFF / No-Late don't carry status.
+    const status = isOffOrNl ? null : date < todayIso ? 'posted' : rawStatus
+    const statusLabel =
+      status && status !== 'planned' ? ` · ${status.charAt(0).toUpperCase() + status.slice(1)}` : ''
 
     if (entry.hosp === 'OFF') {
       cal.createEvent({
