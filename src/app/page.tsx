@@ -38,10 +38,15 @@ export default async function HubPage() {
           </p>
         </Link>
 
-        <div className="flex cursor-not-allowed flex-col gap-1 rounded-lg border border-black/10 p-6 opacity-60 dark:border-white/10">
-          <h2 className="font-medium">Planner</h2>
-          <p className="text-sm text-zinc-500">Link coming soon</p>
-        </div>
+        <Link
+          href="/schedule"
+          className="flex flex-col gap-1 rounded-lg border border-black/10 p-6 transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5"
+        >
+          <h2 className="font-medium">Schedule</h2>
+          <p className="text-sm text-zinc-500">
+            Shifts, hospitals, pace toward your annual goal. Subscribes to your calendar.
+          </p>
+        </Link>
 
         <div className="flex cursor-not-allowed flex-col gap-1 rounded-lg border border-black/10 p-6 opacity-60 sm:col-span-2 dark:border-white/10">
           <h2 className="font-medium">Drive</h2>

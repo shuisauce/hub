@@ -18,6 +18,10 @@ async function isValidSession(token: string | undefined): Promise<boolean> {
 
 export default async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
+
+  // Public iCal feed — token is the auth.
+  if (pathname.startsWith('/api/ical/')) return NextResponse.next()
+
   const token = request.cookies.get(COOKIE_NAME)?.value
   const valid = await isValidSession(token)
 
