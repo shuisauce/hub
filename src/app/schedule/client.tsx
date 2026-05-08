@@ -885,7 +885,7 @@ function PaintToolbar({
           const key = hoKey(o)
           const hours = hoHours(o)
           const isOc = hoOncall(o)
-          const label = typeof o === 'object' ? o.label : `${o}h`
+          const label = typeof o === 'object' ? o.label : `${o}`
           const isActive =
             paint.label === (typeof o === 'object' ? o.label : null) &&
             paint.hours === hours &&
@@ -1040,7 +1040,7 @@ function DayCell({
         style={style}
       >
         {!asOverlay && renderStatusMark(status)}
-        <span className="h">{s.label || `${s.h}h`}</span>
+        <span className="h">{s.label || `${s.h}`}</span>
         <span className="hosp-short">{h.short}</span>
         <span className="amt mono">{isOc ? 'on-call' : fmtMoneyShort(shiftAmount(s, lookup))}</span>
         {showDot && (
@@ -1347,7 +1347,7 @@ function DayPopup({
               {hourOptions.filter((o) => !hoOncall(o)).map((o) => {
                 const k2 = hoKey(o)
                 const h = hoHours(o)
-                const label = typeof o === 'object' ? o.label : `${o}h`
+                const label = typeof o === 'object' ? o.label : `${o}`
                 return (
                   <button key={k2} className={`chip ${hours === h ? 'active' : ''}`} onClick={() => setHours(h)}>
                     {label}
@@ -1856,7 +1856,7 @@ function SettingsModal({
             <div className="hour-pills">
               {settings.hourOptions.map((o) => {
                 const key = hoKey(o)
-                const label = typeof o === 'object' ? o.label : `${o}h`
+                const label = typeof o === 'object' ? o.label : `${o}`
                 return (
                   <span key={key} className="hour-pill">
                     {label}

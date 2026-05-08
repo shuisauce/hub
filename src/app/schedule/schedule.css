@@ -151,8 +151,8 @@
 .schedule-app .cal-scroll::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; border: 2px solid var(--surface); }
 
 .schedule-app .cal-flow { display: flex; flex-direction: column; }
-.schedule-app .cal-dow-row { display: grid; grid-template-columns: repeat(7, 1fr); position: sticky; top: 0; z-index: 5; background: var(--surface-2); border-bottom: 1px solid var(--border); }
-.schedule-app .cal-week { display: grid; grid-template-columns: repeat(7, 1fr); }
+.schedule-app .cal-dow-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); position: sticky; top: 0; z-index: 5; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.schedule-app .cal-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 
 .schedule-app .month-divider {
   display: flex; align-items: baseline; gap: 12px;
@@ -183,6 +183,10 @@
   cursor: pointer;
   transition: background 0.1s;
   display: flex; flex-direction: column; gap: 4px;
+  /* grid cells get a content min-width by default — opt out so a wide shift
+     card can't push the column wider than its 1fr share. */
+  min-width: 0;
+  overflow: hidden;
 }
 .schedule-app .day:hover { background: var(--surface-2); }
 .schedule-app .cal-week .day:last-child { border-right: none; }
@@ -203,7 +207,15 @@
   font-weight: 600;
   display: flex; align-items: center; gap: 4px;
   border-left: 3px solid;
+  /* keep contents on one line and clipped to the cell — no wrapping or
+     overflow when the column gets narrow. */
+  min-width: 0;
+  overflow: hidden;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
+.schedule-app .shift-card > * { min-width: 0; }
+.schedule-app .shift-card .h { overflow: hidden; text-overflow: ellipsis; }
 .schedule-app .shift-card.HFH { background: var(--hfh-bg); border-color: var(--hfh); color: var(--hfh); }
 .schedule-app .shift-card.GR  { background: var(--gr-bg); border-color: var(--gr); color: var(--gr); }
 .schedule-app .shift-card.OFF { background: #fef3c7; border-color: #f59e0b; color: #92400e; letter-spacing: 0.08em; font-weight: 700; }
