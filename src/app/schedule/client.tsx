@@ -66,7 +66,9 @@ const monthDays = (y: number, m: number) => new Date(y, m + 1, 0).getDate()
 
 const isOffShift = (s?: ShiftEntry) => !!s && s.hosp === 'OFF'
 const isOncallShift = (s?: ShiftEntry) => !!s && !!s.oc
-const isUncountedShift = (s?: ShiftEntry) => isOffShift(s) || isOncallShift(s)
+const isNoLateOnly = (s?: ShiftEntry) => !!s && s.hosp === 'NL'
+const isUncountedShift = (s?: ShiftEntry) =>
+  isOffShift(s) || isOncallShift(s) || isNoLateOnly(s)
 
 const fmtMoney = (n: number) => '$' + Math.round(n).toLocaleString()
 const fmtMoneyShort = (n: number) =>
@@ -105,6 +107,7 @@ function visibleMonths(): { y: number; m: number }[] {
 function makeHospLookup(hospitals: Hospital[]): Record<string, Hospital> {
   const out: Record<string, Hospital> = {
     OFF: { id: 'OFF', name: 'Off', short: 'OFF', rate: 0, color: '#f59e0b', pay: 'biweekly' },
+    NL: { id: 'NL', name: 'No Late', short: 'NL', rate: 0, color: '#4338ca', pay: 'biweekly' },
   }
   for (const h of hospitals) out[h.id] = h
   return out
@@ -226,18 +229,19 @@ function csvEscape(v: string | number | null | undefined): string {
 function exportCSV(schedule: Schedule, settings: ScheduleSettings) {
   const lookup = makeHospLookup(settings.hospitals)
   const rows: (string | number)[][] = [
-    ['Date', 'Day', 'Type', 'Hospital', 'Hospital ID', 'Hours', 'Label', 'Rate', 'Gross', 'On-call'],
+    ['Date', 'Day', 'Type', 'Hospital', 'Hospital ID', 'Hours', 'Label', 'Rate', 'Gross', 'On-call', 'No Late', 'No-Late reason'],
   ]
   const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-  const emit = (key: string, s: ShiftEntry, isOverlay: boolean) => {
+  const emit = (key: string, s: ShiftEntry, isOverlay: boolean, noLate: boolean, noLateLabel: string) => {
     const p = parseKey(key)
     const dt = new Date(p.y, p.m, p.d)
     const hosp = lookup[s.hosp]
     const isOff = s.hosp === 'OFF'
+    const isNL = s.hosp === 'NL'
     const isOc = !!s.oc || isOverlay
-    const type = isOff ? 'OFF' : isOc ? 'On-call' : 'Shift'
+    const type = isOff ? 'OFF' : isNL ? 'No Late' : isOc ? 'On-call' : 'Shift'
     const rate = hosp?.rate ?? 0
-    const gross = isOff || isOc ? 0 : rate * (s.h || 0)
+    const gross = isOff || isNL || isOc ? 0 : rate * (s.h || 0)
     rows.push([
       key,
       dows[dt.getDay()],
@@ -249,13 +253,16 @@ function exportCSV(schedule: Schedule, settings: ScheduleSettings) {
       rate,
       gross,
       isOc ? 'yes' : '',
+      noLate ? 'yes' : '',
+      noLateLabel,
     ])
   }
   Object.keys(schedule).sort().forEach((k) => {
     const s = schedule[k]
     if (!s) return
-    emit(k, s, false)
-    if (s.ocOverlay) emit(k, { hosp: s.ocOverlay.hosp, h: s.ocOverlay.h, label: s.ocOverlay.label }, true)
+    const nlLabel = s.hosp === 'NL' ? (s.noLateLabel ?? '') : (s.noLate ? (s.noLateLabel ?? '') : '')
+    emit(k, s, false, !!s.noLate || s.hosp === 'NL', nlLabel)
+    if (s.ocOverlay) emit(k, { hosp: s.ocOverlay.hosp, h: s.ocOverlay.h, label: s.ocOverlay.label }, true, false, '')
   })
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n')
   triggerDownload('schedule-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv')
@@ -296,6 +303,7 @@ function exportICS(schedule: Schedule, settings: ScheduleSettings) {
     const p = parseKey(key)
     const hosp = lookup[s.hosp]
     const isOff = s.hosp === 'OFF'
+    const isNL = s.hosp === 'NL'
     const isOc = !!s.oc || suffix === 'oc'
     const tpl = findTpl(s.label)
     const uid = key + (suffix ? '-' + suffix : '') + '@kms-schedule'
@@ -303,7 +311,12 @@ function exportICS(schedule: Schedule, settings: ScheduleSettings) {
     let dtStart: string
     let dtEnd: string
     if (isOff) {
-      summary = 'OFF'
+      summary = s.label ? `OFF · ${s.label}` : 'OFF'
+      dtStart = 'DTSTART;VALUE=DATE:' + icsDate(p.y, p.m, p.d)
+      const next = new Date(p.y, p.m, p.d + 1)
+      dtEnd = 'DTEND;VALUE=DATE:' + icsDate(next.getFullYear(), next.getMonth(), next.getDate())
+    } else if (isNL) {
+      summary = s.noLateLabel ? `No Late · ${s.noLateLabel}` : 'No Late'
       dtStart = 'DTSTART;VALUE=DATE:' + icsDate(p.y, p.m, p.d)
       const next = new Date(p.y, p.m, p.d + 1)
       dtEnd = 'DTEND;VALUE=DATE:' + icsDate(next.getFullYear(), next.getMonth(), next.getDate())
@@ -335,10 +348,12 @@ function exportICS(schedule: Schedule, settings: ScheduleSettings) {
       dtEnd = 'DTEND;TZID=America/Detroit:' + endStr
     }
     const desc = isOff
-      ? 'Unavailable'
-      : isOc
-        ? `${hosp?.name ?? s.hosp} on-call`
-        : `${hosp?.name ?? s.hosp} · ${s.h || 0}h · $${(((hosp?.rate ?? 0) * (s.h || 0))).toLocaleString()}`
+      ? (s.label ? `Unavailable — ${s.label}` : 'Unavailable')
+      : isNL
+        ? "Can't work a late shift"
+        : isOc
+          ? `${hosp?.name ?? s.hosp} on-call`
+          : `${hosp?.name ?? s.hosp} · ${s.h || 0}h · $${(((hosp?.rate ?? 0) * (s.h || 0))).toLocaleString()}${s.noLate ? ' · No Late' : ''}`
     lines.push(
       'BEGIN:VEVENT',
       'UID:' + uid,
@@ -347,7 +362,23 @@ function exportICS(schedule: Schedule, settings: ScheduleSettings) {
       dtEnd,
       'SUMMARY:' + icsEscape(summary),
       'DESCRIPTION:' + icsEscape(desc),
-      'CATEGORIES:' + (isOff ? 'OFF' : isOc ? 'On-call' : 'Shift'),
+      'CATEGORIES:' + (isOff ? 'OFF' : isNL ? 'No-Late' : isOc ? 'On-call' : 'Shift'),
+      'END:VEVENT',
+    )
+  }
+
+  const emitNoLateMarker = (key: string, reason?: string) => {
+    const p = parseKey(key)
+    const next = new Date(p.y, p.m, p.d + 1)
+    lines.push(
+      'BEGIN:VEVENT',
+      'UID:' + key + '-nolate@kms-schedule',
+      'DTSTAMP:' + stamp,
+      'DTSTART;VALUE=DATE:' + icsDate(p.y, p.m, p.d),
+      'DTEND;VALUE=DATE:' + icsDate(next.getFullYear(), next.getMonth(), next.getDate()),
+      'SUMMARY:' + icsEscape(reason ? `No Late · ${reason}` : 'No Late'),
+      'DESCRIPTION:' + icsEscape(reason ? `Can't work a late shift — ${reason}` : "Can't work a late shift"),
+      'CATEGORIES:No-Late',
       'END:VEVENT',
     )
   }
@@ -358,6 +389,8 @@ function exportICS(schedule: Schedule, settings: ScheduleSettings) {
     emit(k, s, '')
     if (s.ocOverlay)
       emit(k, { hosp: s.ocOverlay.hosp, h: s.ocOverlay.h, label: s.ocOverlay.label }, 'oc')
+    // Add a separate all-day No-Late event if the day has a noLate flag on a real shift.
+    if (s.noLate && s.hosp !== 'NL') emitNoLateMarker(k, s.noLateLabel)
   })
   lines.push('END:VCALENDAR')
   triggerDownload(
@@ -429,9 +462,9 @@ function PaceStrip({
 }) {
   const today = todayKey()
   const expected = expectedPace(today, annualGoal)
+  const ty = parseKey(today).y
   const futureScheduled = useMemo(() => {
     let sum = 0
-    const ty = parseKey(today).y
     for (const k in schedule) {
       const p = parseKey(k)
       if (p.y !== ty) continue
@@ -439,12 +472,33 @@ function PaceStrip({
       sum += shiftAmount(schedule[k], lookup)
     }
     return sum
-  }, [schedule, lookup, today])
+  }, [schedule, lookup, today, ty])
+
+  const farthestKey = useMemo(() => {
+    let last: string | null = null
+    for (const k in schedule) {
+      const p = parseKey(k)
+      if (p.y !== ty) continue
+      if (k <= today) continue
+      if (isUncountedShift(schedule[k])) continue
+      if (!last || k > last) last = k
+    }
+    return last
+  }, [schedule, today, ty])
+  const farthestExpected = farthestKey ? expectedPace(farthestKey, annualGoal) : null
+
   const projected = earnedYTD + futureScheduled
   const delta = earnedYTD - expected
   const earnedPct = Math.min(100, (earnedYTD / annualGoal) * 100)
   const projectedPct = Math.min(100, (projected / annualGoal) * 100)
   const expectedPct = Math.min(100, (expected / annualGoal) * 100)
+  const farthestPct = farthestExpected != null ? Math.min(100, (farthestExpected / annualGoal) * 100) : null
+
+  let farthestTitle: string | undefined
+  if (farthestKey && farthestExpected != null) {
+    const p = parseKey(farthestKey)
+    farthestTitle = `Pace by your last scheduled shift (${monthShort(p.m)} ${p.d}): ${fmtMoney(farthestExpected)}`
+  }
 
   return (
     <div className="pace-strip" data-open={open} onClick={onToggle}>
@@ -460,7 +514,10 @@ function PaceStrip({
         <div className="pace-bar" title={`Earned ${fmtMoney(earnedYTD)} · projected ${fmtMoney(projected)} · pace ${fmtMoney(expected)}`}>
           <div className="fill-projected" style={{ width: projectedPct + '%' }} />
           <div className="fill" style={{ width: earnedPct + '%' }} />
-          <div className="marker" style={{ left: expectedPct + '%' }} />
+          <div className="marker" style={{ left: expectedPct + '%' }} title={`Today's pace: ${fmtMoney(expected)}`} />
+          {farthestPct != null && (
+            <div className="marker future" style={{ left: farthestPct + '%' }} title={farthestTitle} />
+          )}
         </div>
         <span className={'pace-delta ' + (delta < 0 ? 'behind' : 'ahead')}>
           {delta < 0 ? '−' : '+'}{fmtMoneyShort(Math.abs(delta))} {delta < 0 ? 'behind' : 'ahead'}
@@ -563,9 +620,15 @@ function PaintToolbar({
     if (paint.active && paint.hosp === 'OFF') clear()
     else setPaint({ ...paint, hosp: 'OFF', mode: 'add', active: true })
   }
+  const toggleNoLate = () => {
+    if (paint.active && paint.hosp === 'NL') clear()
+    else setPaint({ ...paint, hosp: 'NL', mode: 'add', active: true })
+  }
   const visibleHosps = hospitals.filter(h => h.enabled !== false)
   const offArmed = paint.active && paint.hosp === 'OFF'
-  const isPainting = paint.active && paint.hosp && (paint.hosp === 'OFF' || paint.hours)
+  const noLateArmed = paint.active && paint.hosp === 'NL'
+  const isPainting =
+    paint.active && paint.hosp && (paint.hosp === 'OFF' || paint.hosp === 'NL' || paint.hours)
 
   return (
     <div className="toolbar">
@@ -592,13 +655,14 @@ function PaintToolbar({
             paint.label === (typeof o === 'object' ? o.label : null) &&
             paint.hours === hours &&
             !!paint.oc === isOc &&
-            paint.hosp !== 'OFF'
+            paint.hosp !== 'OFF' && paint.hosp !== 'NL'
+          const disabled = paint.hosp === 'OFF' || paint.hosp === 'NL'
           return (
             <button
               key={key}
               className={`chip ${isActive ? 'active' : ''} ${isOc ? 'oc' : ''}`}
-              disabled={paint.hosp === 'OFF'}
-              style={paint.hosp === 'OFF' ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+              disabled={disabled}
+              style={disabled ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
               onClick={() => {
                 const lab = typeof o === 'object' ? o.label : null
                 setPaint({ ...paint, hours, label: lab, oc: isOc, active: paint.active || !!paint.hosp })
@@ -635,9 +699,16 @@ function PaintToolbar({
       )}
       <span style={{ flex: 1 }} />
       <button
+        className={'paint-nolate' + (noLateArmed ? ' armed' : '')}
+        onClick={toggleNoLate}
+        title="Paint days where you can't work a late shift (concert, dinner, appointment, etc.)"
+      >
+        {noLateArmed ? '● No Late' : '○ No Late'}
+      </button>
+      <button
         className={'paint-off' + (offArmed ? ' armed' : '')}
         onClick={toggleOff}
-        title="Paint days as OFF (unavailable)"
+        title="Paint days as OFF (unavailable). Click an existing OFF day to add a reason."
       >
         {offArmed ? '● Off' : '○ Off'}
       </button>
@@ -681,7 +752,20 @@ function DayCell({
 
   const renderShiftCard = (s: ShiftEntry, asOverlay = false): ReactElement | null => {
     if (s.hosp === 'OFF') {
-      return <div key="off" className="shift-card OFF"><span>OFF</span></div>
+      return (
+        <div key="off" className="shift-card OFF">
+          <span>OFF</span>
+          {s.label && <span className="reason">· {s.label}</span>}
+        </div>
+      )
+    }
+    if (s.hosp === 'NL') {
+      return (
+        <div key="nl" className="shift-card NL">
+          <span>NO LATE</span>
+          {s.noLateLabel && <span className="reason">· {s.noLateLabel}</span>}
+        </div>
+      )
     }
     const h = lookup[s.hosp]
     if (!h) return null
@@ -727,6 +811,12 @@ function DayCell({
       </div>
       {shift && renderShiftCard(shift)}
       {shift && shift.ocOverlay && renderShiftCard({ hosp: shift.ocOverlay.hosp, h: shift.ocOverlay.h, label: shift.ocOverlay.label, oc: true }, true)}
+      {shift && shift.noLate && shift.hosp !== 'NL' && (
+        <span className="nolate-badge">
+          NO LATE
+          {shift.noLateLabel && <span className="reason">· {shift.noLateLabel}</span>}
+        </span>
+      )}
     </div>
   )
 }
@@ -900,17 +990,58 @@ function DayPopup({
   const date = new Date(p.y, p.m, p.d)
   const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][date.getDay()]
   const existing = schedule[k]
-
   const visibleHosps = hospitals.filter((h) => h.enabled !== false)
-  const defaultHosp = existing?.hosp && existing.hosp !== 'OFF' ? existing.hosp : (visibleHosps[0]?.id || '')
+
+  // OFF-day editor branch — single text field for the reason.
+  if (existing?.hosp === 'OFF') {
+    return (
+      <OffReasonPopup
+        dayName={dayName}
+        month={p.m}
+        day={p.d}
+        existing={existing}
+        onSave={(entry) => { onSave(k, entry); onClose() }}
+        onDelete={() => { onDelete(k); onClose() }}
+        onClose={onClose}
+      />
+    )
+  }
+
+  // No-Late-only editor branch — text field for what makes it No Late.
+  if (existing?.hosp === 'NL') {
+    return (
+      <NoLateReasonPopup
+        dayName={dayName}
+        month={p.m}
+        day={p.d}
+        existing={existing}
+        onSave={(entry) => { onSave(k, entry); onClose() }}
+        onDelete={() => { onDelete(k); onClose() }}
+        onClose={onClose}
+      />
+    )
+  }
+
+  const defaultHosp = existing?.hosp ? existing.hosp : (visibleHosps[0]?.id || '')
   const [hosp, setHosp] = useState(defaultHosp)
-  const [hours, setHours] = useState<number>(existing?.h && existing.hosp !== 'OFF' ? existing.h : 12)
+  const [hours, setHours] = useState<number>(existing?.h && existing.h ? existing.h : 12)
+  const [noLate, setNoLate] = useState<boolean>(!!existing?.noLate)
+  const [noLateLabel, setNoLateLabel] = useState<string>(existing?.noLateLabel ?? '')
 
   const hospObj = hospitals.find((h) => h.id === hosp)
   const amt = hospObj ? hospObj.rate * hours : 0
   const times = SHIFT_TIMES[hours]
 
-  const save = () => { if (hosp) onSave(k, { hosp, h: hours }); onClose() }
+  const save = () => {
+    if (!hosp) return
+    const entry: ShiftEntry = { hosp, h: hours }
+    if (noLate) {
+      entry.noLate = true
+      if (noLateLabel.trim()) entry.noLateLabel = noLateLabel.trim()
+    }
+    onSave(k, entry)
+    onClose()
+  }
   const remove = () => { onDelete(k); onClose() }
 
   return (
@@ -957,6 +1088,25 @@ function DayPopup({
               </span>
             )}
           </div>
+          <div className="popup-row">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={noLate}
+                onChange={(e) => setNoLate(e.target.checked)}
+              />
+              <span>Mark <strong>No Late</strong> — afternoon appointment, evening event</span>
+            </label>
+            {noLate && (
+              <input
+                className="s-input"
+                placeholder="Reason (optional) — e.g. concert at 8pm"
+                value={noLateLabel}
+                onChange={(e) => setNoLateLabel(e.target.value)}
+                style={{ marginTop: 6, height: 32, fontSize: 13 }}
+              />
+            )}
+          </div>
           <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>Estimated gross</span>
             <span className="mono" style={{ fontSize: 18, fontWeight: 700 }}>{fmtMoney(amt)}</span>
@@ -967,6 +1117,110 @@ function DayPopup({
           <span className="spacer" />
           <button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" onClick={save} disabled={!hosp}>{existing ? 'Update shift' : 'Add shift'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function OffReasonPopup({
+  dayName, month, day, existing, onSave, onDelete, onClose,
+}: {
+  dayName: string
+  month: number
+  day: number
+  existing: ShiftEntry
+  onSave: (entry: ShiftEntry) => void
+  onDelete: () => void
+  onClose: () => void
+}) {
+  const [reason, setReason] = useState(existing.label ?? '')
+
+  const save = () => {
+    const next: ShiftEntry = { hosp: 'OFF', h: 0 }
+    if (reason.trim()) next.label = reason.trim()
+    onSave(next)
+  }
+
+  return (
+    <div className="popup-backdrop" onClick={onClose}>
+      <div className="popup" onClick={(e) => e.stopPropagation()}>
+        <div className="popup-head">
+          <Icon name="calendar" size={18} />
+          <h3>{dayName}, {monthShort(month)} {day} · OFF</h3>
+          <button className="iconbtn close" onClick={onClose}><Icon name="x" size={16} /></button>
+        </div>
+        <div className="popup-body">
+          <div className="popup-row">
+            <span className="label">Reason</span>
+            <input
+              className="s-input"
+              autoFocus
+              placeholder="e.g. Vacation, family wedding, training day"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') save() }}
+              style={{ height: 38, fontSize: 14 }}
+            />
+          </div>
+        </div>
+        <div className="popup-foot">
+          <button className="btn danger" onClick={onDelete}><Icon name="trash" size={12} /> Clear OFF</button>
+          <span className="spacer" />
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" onClick={save}>Save</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function NoLateReasonPopup({
+  dayName, month, day, existing, onSave, onDelete, onClose,
+}: {
+  dayName: string
+  month: number
+  day: number
+  existing: ShiftEntry
+  onSave: (entry: ShiftEntry) => void
+  onDelete: () => void
+  onClose: () => void
+}) {
+  const [reason, setReason] = useState(existing.noLateLabel ?? '')
+
+  const save = () => {
+    const next: ShiftEntry = { hosp: 'NL', h: 0 }
+    if (reason.trim()) next.noLateLabel = reason.trim()
+    onSave(next)
+  }
+
+  return (
+    <div className="popup-backdrop" onClick={onClose}>
+      <div className="popup" onClick={(e) => e.stopPropagation()}>
+        <div className="popup-head">
+          <Icon name="calendar" size={18} />
+          <h3>{dayName}, {monthShort(month)} {day} · No Late</h3>
+          <button className="iconbtn close" onClick={onClose}><Icon name="x" size={16} /></button>
+        </div>
+        <div className="popup-body">
+          <div className="popup-row">
+            <span className="label">Reason</span>
+            <input
+              className="s-input"
+              autoFocus
+              placeholder="e.g. concert at 8pm, kid's recital, dinner reservation"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') save() }}
+              style={{ height: 38, fontSize: 14 }}
+            />
+          </div>
+        </div>
+        <div className="popup-foot">
+          <button className="btn danger" onClick={onDelete}><Icon name="trash" size={12} /> Clear</button>
+          <span className="spacer" />
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" onClick={save}>Save</button>
         </div>
       </div>
     </div>
@@ -1328,7 +1582,7 @@ export function ScheduleClient({
     const root = scheduleAppRef.current
     if (!root) return
     const el = root.querySelector('.day.today') as HTMLElement | null
-    if (el) el.scrollIntoView({ block: 'center', behavior })
+    if (el) el.scrollIntoView({ block: 'start', behavior })
   }, [])
 
   useLayoutEffect(() => {
@@ -1458,38 +1712,63 @@ export function ScheduleClient({
       return false
     }
     if (!p.hosp) return false
-    if (p.hosp !== 'OFF' && !p.hours) return false
-    const hours = p.hosp === 'OFF' ? 0 : p.hours
-    const label = p.hosp === 'OFF' ? null : (p.label || null)
-    const oc = p.hosp === 'OFF' ? false : !!p.oc
+    if (p.hosp !== 'OFF' && p.hosp !== 'NL' && !p.hours) return false
     const ex = cur[key]
 
     let nextEntry: ShiftEntry
     if (p.hosp === 'OFF') {
       nextEntry = { hosp: 'OFF', h: 0 }
-    } else if (oc) {
-      const newOc: ShiftEntry = { hosp: p.hosp, h: hours }
-      if (label) newOc.label = label
-      if (!ex || ex.hosp === 'OFF' || (ex.oc && !ex.ocOverlay)) {
-        nextEntry = { ...newOc, oc: true }
+      if (ex && ex.hosp === 'OFF' && ex.label) nextEntry.label = ex.label
+      if (ex && ex.hosp === 'OFF' && ex.noLate) nextEntry.noLate = true
+    } else if (p.hosp === 'NL') {
+      if (!ex) {
+        nextEntry = { hosp: 'NL', h: 0 }
+      } else if (ex.hosp === 'NL') {
+        return false
+      } else if (ex.hosp === 'OFF') {
+        return false
       } else {
-        const { ocOverlay: _ignore, ...rest } = ex
-        void _ignore
-        nextEntry = { ...rest, ocOverlay: { hosp: p.hosp, h: hours, ...(label ? { label } : {}) } }
+        nextEntry = { ...ex, noLate: true }
+        if (ex.noLateLabel) nextEntry.noLateLabel = ex.noLateLabel
       }
     } else {
-      const newRegular: ShiftEntry = { hosp: p.hosp, h: hours }
-      if (label) newRegular.label = label
-      let preservedOc: ShiftEntry['ocOverlay'] | null = null
-      if (ex && ex.hosp !== 'OFF') {
-        if (ex.oc && !ex.ocOverlay) {
-          preservedOc = { hosp: ex.hosp, h: ex.h }
-          if (ex.label) preservedOc.label = ex.label
-        } else if (ex.ocOverlay) {
-          preservedOc = ex.ocOverlay
+      const hours = p.hours
+      const label = p.label || null
+      const oc = !!p.oc
+      if (oc) {
+        const newOc: ShiftEntry = { hosp: p.hosp, h: hours }
+        if (label) newOc.label = label
+        if (!ex || ex.hosp === 'OFF' || ex.hosp === 'NL' || (ex.oc && !ex.ocOverlay)) {
+          nextEntry = { ...newOc, oc: true }
+          if (ex?.noLate) nextEntry.noLate = true
+        } else {
+          const { ocOverlay: _ignore, ...rest } = ex
+          void _ignore
+          nextEntry = { ...rest, ocOverlay: { hosp: p.hosp, h: hours, ...(label ? { label } : {}) } }
         }
+      } else {
+        const newRegular: ShiftEntry = { hosp: p.hosp, h: hours }
+        if (label) newRegular.label = label
+        let preservedOc: ShiftEntry['ocOverlay'] | null = null
+        let preservedNoLate = false
+        let preservedNoLateLabel: string | undefined
+        if (ex && ex.hosp !== 'OFF' && ex.hosp !== 'NL') {
+          if (ex.oc && !ex.ocOverlay) {
+            preservedOc = { hosp: ex.hosp, h: ex.h }
+            if (ex.label) preservedOc.label = ex.label
+          } else if (ex.ocOverlay) {
+            preservedOc = ex.ocOverlay
+          }
+          preservedNoLate = !!ex.noLate
+          preservedNoLateLabel = ex.noLateLabel
+        } else if (ex?.hosp === 'NL') {
+          preservedNoLate = true
+          preservedNoLateLabel = ex.noLateLabel
+        }
+        nextEntry = preservedOc ? { ...newRegular, ocOverlay: preservedOc } : newRegular
+        if (preservedNoLate) nextEntry.noLate = true
+        if (preservedNoLateLabel) nextEntry.noLateLabel = preservedNoLateLabel
       }
-      nextEntry = preservedOc ? { ...newRegular, ocOverlay: preservedOc } : newRegular
     }
 
     if (ex && JSON.stringify(ex) === JSON.stringify(nextEntry)) return false
@@ -1510,8 +1789,22 @@ export function ScheduleClient({
     applyPaint(key)
   }
   const onDayClick = (key: string) => {
-    if (paintRef.current.active) return
     if (key > maxKey) return
+    const p = paintRef.current
+    const cur = scheduleRef.current[key]
+    // Click-while-painting opens a reason editor when the paint mode and the
+    // cell match (OFF on OFF day, or No Late on a No-Late day). Drag-painting
+    // is unaffected because click only fires when mouseDown+up land on the
+    // same cell with no movement.
+    if (p.active && p.hosp === 'OFF' && cur?.hosp === 'OFF') {
+      setPopupKey(key)
+      return
+    }
+    if (p.active && p.hosp === 'NL' && (cur?.hosp === 'NL' || cur?.noLate)) {
+      setPopupKey(key)
+      return
+    }
+    if (p.active) return
     setPopupKey(key)
   }
 
@@ -1540,8 +1833,8 @@ export function ScheduleClient({
     <div className="schedule-app" ref={scheduleAppRef}>
       <div className="pane">
         <div className="topbar">
-          <Link href="/" className="iconbtn" title="Hub" aria-label="Back to hub">
-            <Icon name="chev-left" size={18} />
+          <Link href="/" className="btn" title="Back to Hub">
+            <Icon name="chev-left" size={14} /> Hub
           </Link>
           <h1>Schedule</h1>
           <span className="subtle">· {monthName(parseKey(today).m)} {parseKey(today).y}</span>

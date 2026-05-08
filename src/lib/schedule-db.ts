@@ -21,6 +21,10 @@ export type ShiftEntry = {
   h: number
   label?: string
   oc?: boolean
+  /** Mark that the day has a "no late shift" constraint — afternoon appointment, evening event, etc. */
+  noLate?: boolean
+  /** Free-text reason for the No Late constraint, e.g. "concert at 8pm". */
+  noLateLabel?: string
   ocOverlay?: { hosp: string; h: number; label?: string }
 }
 

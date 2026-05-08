@@ -65,24 +65,46 @@ export async function GET(
       cal.createEvent({
         start: parseLocal(date, '00:00'),
         allDay: true,
-        summary: 'OFF',
+        summary: entry.label ? `OFF · ${entry.label}` : 'OFF',
+        description: entry.label ? `Unavailable — ${entry.label}` : 'Unavailable',
         busystatus: ICalEventBusyStatus.FREE,
         id: `off-${date}`,
+      })
+      if (entry.noLate) {
+        cal.createEvent({
+          start: parseLocal(date, '00:00'),
+          allDay: true,
+          summary: 'No Late',
+          description: "Can't work a late shift",
+          busystatus: ICalEventBusyStatus.FREE,
+          id: `nolate-${date}`,
+        })
+      }
+      continue
+    }
+    if (entry.hosp === 'NL') {
+      cal.createEvent({
+        start: parseLocal(date, '00:00'),
+        allDay: true,
+        summary: entry.noLateLabel ? `No Late · ${entry.noLateLabel}` : 'No Late',
+        description: entry.noLateLabel ? `Can't work a late shift — ${entry.noLateLabel}` : "Can't work a late shift",
+        busystatus: ICalEventBusyStatus.FREE,
+        id: `nolate-${date}`,
       })
       continue
     }
     const hosp = hospById.get(entry.hosp)
     const summary = hosp
-      ? `${hosp.short} ${entry.label || `${entry.h}h`}${entry.oc ? ' (on-call)' : ''}`
+      ? `${hosp.short} ${entry.label || `${entry.h}h`}${entry.oc ? ' (on-call)' : ''}${entry.noLate ? ' · No Late' : ''}`
       : `${entry.hosp} ${entry.h}h`
-    const range = entry.label && /^\d{1,2}(:\d{2})?[AP]?-/.test(entry.label) ? null : null
-    void range
     const bounds = shiftBounds(date, entry.h, undefined, undefined)
     cal.createEvent({
       start: bounds.start,
       end: bounds.end,
       summary,
-      description: hosp ? `${hosp.name} · $${hosp.rate}/hr` : '',
+      description: hosp
+        ? `${hosp.name} · $${hosp.rate}/hr${entry.noLate ? ' · No Late constraint' : ''}`
+        : '',
       id: `shift-${date}`,
     })
 
@@ -97,6 +119,17 @@ export async function GET(
         summary: ocSummary,
         busystatus: ICalEventBusyStatus.FREE,
         id: `oc-${date}`,
+      })
+    }
+
+    if (entry.noLate) {
+      cal.createEvent({
+        start: parseLocal(date, '00:00'),
+        allDay: true,
+        summary: entry.noLateLabel ? `No Late · ${entry.noLateLabel}` : 'No Late',
+        description: entry.noLateLabel ? `Can't work a late shift — ${entry.noLateLabel}` : "Can't work a late shift",
+        busystatus: ICalEventBusyStatus.FREE,
+        id: `nolate-${date}`,
       })
     }
   }

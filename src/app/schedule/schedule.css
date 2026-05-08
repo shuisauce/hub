@@ -86,6 +86,8 @@
 .schedule-app .pace-bar .fill-projected { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent) 30%, transparent); border-radius: 4px; }
 .schedule-app .pace-bar .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 4px; }
 .schedule-app .pace-bar .marker { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink-2); border-radius: 1px; }
+.schedule-app .pace-bar .marker.future { background: var(--ink-3); width: 2px; opacity: 0.7; }
+.schedule-app .pace-bar .marker.future::before { content: ''; position: absolute; top: -4px; left: 50%; transform: translateX(-50%); width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); }
 .schedule-app .pace-delta { font-size: 12px; font-weight: 600; white-space: nowrap; }
 .schedule-app .pace-delta.behind { color: var(--accent); }
 .schedule-app .pace-delta.ahead { color: var(--positive); }
@@ -167,7 +169,7 @@
 .schedule-app .cal-week .day:last-child { border-right: none; }
 .schedule-app .day.faded { background: var(--bg); color: var(--ink-4); cursor: default; }
 .schedule-app .day.faded:hover { background: var(--bg); }
-.schedule-app .day.today { background: #fffbeb; }
+.schedule-app .day.today { background: #fffbeb; scroll-margin-top: 96px; }
 .schedule-app .day.today .num { color: var(--accent); font-weight: 800; }
 .schedule-app .day.weekend { background: color-mix(in srgb, var(--ink-3) 8%, var(--surface)); }
 .schedule-app .day.weekend .num { color: var(--ink-3); }
@@ -185,7 +187,17 @@
 }
 .schedule-app .shift-card.HFH { background: var(--hfh-bg); border-color: var(--hfh); color: var(--hfh); }
 .schedule-app .shift-card.GR  { background: var(--gr-bg); border-color: var(--gr); color: var(--gr); }
-.schedule-app .shift-card.OFF { background: #fef3c7; border-color: #f59e0b; color: #92400e; justify-content: center; letter-spacing: 0.08em; font-weight: 700; }
+.schedule-app .shift-card.OFF { background: #fef3c7; border-color: #f59e0b; color: #92400e; letter-spacing: 0.08em; font-weight: 700; }
+.schedule-app .shift-card.OFF .reason { font-weight: 500; letter-spacing: 0; opacity: 0.85; margin-left: 4px; text-transform: none; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.schedule-app .shift-card.NL { background: #ede9fe; border-color: #6366f1; color: #4338ca; font-weight: 700; letter-spacing: 0.05em; font-size: 10px; }
+.schedule-app .shift-card.NL .reason { font-weight: 500; letter-spacing: 0; opacity: 0.85; margin-left: 4px; text-transform: none; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.schedule-app .nolate-badge { display: inline-flex; align-items: center; padding: 1px 5px; border-radius: 3px; background: #ede9fe; color: #4338ca; font-size: 9px; font-weight: 700; letter-spacing: 0.05em; margin-top: 2px; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.schedule-app .nolate-badge .reason { font-weight: 500; letter-spacing: 0; margin-left: 3px; opacity: 0.85; }
+.schedule-app .chip.nolate { color: #4338ca; }
+.schedule-app .chip.nolate.active { background: #4338ca; color: #fff; }
+.schedule-app .paint-nolate { padding: 5px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--ink-3); border: 1px solid var(--border); background: var(--surface); transition: all 0.12s; }
+.schedule-app .paint-nolate:hover { background: #ede9fe; color: #4338ca; border-color: #c7d2fe; }
+.schedule-app .paint-nolate.armed { background: #4338ca; color: #fff; border-color: #4338ca; }
 .schedule-app .shift-card.oc { background: repeating-linear-gradient(135deg, color-mix(in srgb, currentColor 7%, transparent) 0 6px, transparent 6px 12px), color-mix(in srgb, currentColor 5%, transparent); border-style: dashed; opacity: 0.92; }
 .schedule-app .chip.oc { font-style: italic; }
 .schedule-app .chip.oc::before { content: '· '; opacity: 0.5; }
