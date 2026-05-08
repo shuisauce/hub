@@ -702,6 +702,7 @@ function Drawer({
   let futureHours = 0
   let paidShiftCount = 0
   let paidShiftGross = 0
+  let lastFutureKey: string | null = null
   for (const k in schedule) {
     const p = parseKey(k)
     if (p.y !== todayP.y) continue
@@ -712,6 +713,7 @@ function Drawer({
     if (k > today) {
       futureGross += shiftAmount(s, lookup)
       futureHours += s.h
+      if (!lastFutureKey || k > lastFutureKey) lastFutureKey = k
     }
   }
 
@@ -726,11 +728,29 @@ function Drawer({
       : (Object.values(lookup).reduce((m, h) => Math.max(m, h.rate), 0) || 233) * 12
   const shiftsToGoal = remaining > 0 && avgShiftGross > 0 ? Math.ceil(remaining / avgShiftGross) : 0
 
-  // W2 comparison: total worked = hoursYTD baseline + future scheduled hours.
-  // A full-time W2 would work `w2WeeklyHours × 52`. Difference / baseline = weeks of vacation.
-  const w2YearHours = Math.max(1, w2WeeklyHours) * 52
+  // W2 comparison: only count the period actually covered by your schedule —
+  // Jan 1 through the last scheduled future shift (or today if you have no
+  // future shifts). Unscheduled future months don't get counted as "vacation."
+  const yearStart = new Date(todayP.y, 0, 1)
+  const periodEnd = lastFutureKey ? (() => {
+    const p = parseKey(lastFutureKey)
+    return new Date(p.y, p.m, p.d)
+  })() : new Date(todayP.y, todayP.m, todayP.d)
+  const periodWeeks = Math.max(
+    0,
+    (periodEnd.getTime() - yearStart.getTime()) / (1000 * 60 * 60 * 24 * 7),
+  )
+  const baseline = Math.max(1, w2WeeklyHours)
+  const w2PeriodHours = periodWeeks * baseline
   const totalHours = hoursYTD + futureHours
-  const weeksOffVsW2 = (w2YearHours - totalHours) / Math.max(1, w2WeeklyHours)
+  const weeksOffVsW2 = (w2PeriodHours - totalHours) / baseline
+
+  const periodEndLabel = lastFutureKey
+    ? (() => {
+        const p = parseKey(lastFutureKey)
+        return `${monthShort(p.m)} ${p.d}`
+      })()
+    : 'today'
 
   return (
     <div className="drawer" style={{ maxHeight: open ? 360 : 0 }}>
@@ -757,7 +777,7 @@ function Drawer({
           <div className="lbl">Weeks off vs W2</div>
           <div className="val mono">{weeksOffVsW2 >= 0 ? weeksOffVsW2.toFixed(1) : `−${Math.abs(weeksOffVsW2).toFixed(1)}`}</div>
           <div className="sub">
-            {Math.round(totalHours)}h total ({Math.round(hoursYTD)}h YTD + {Math.round(futureHours)}h scheduled) / {w2YearHours}h ({w2WeeklyHours}h × 52)
+            Through {periodEndLabel}: {Math.round(totalHours)}h total ({Math.round(hoursYTD)}h YTD + {Math.round(futureHours)}h scheduled) / {Math.round(w2PeriodHours)}h W2 ({w2WeeklyHours}h × {periodWeeks.toFixed(1)} wk)
           </div>
           <div className={'delta ' + (weeksOffVsW2 < 0 ? 'ahead' : 'behind')}>
             {weeksOffVsW2 < 0
