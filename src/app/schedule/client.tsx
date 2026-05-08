@@ -1041,7 +1041,7 @@ function DayCell({
           />
         )}
         <span className="h">{s.label || `${s.h}h`}</span>
-        <span>{h.short}</span>
+        <span className="hosp-short">{h.short}</span>
         <span className="amt mono">{isOc ? 'on-call' : fmtMoneyShort(shiftAmount(s, lookup))}</span>
       </div>
     )

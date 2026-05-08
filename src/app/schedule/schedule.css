@@ -312,12 +312,59 @@
 .schedule-app .ical-box code { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-2); word-break: break-all; padding: 8px; background: var(--surface); border-radius: 4px; border: 1px solid var(--border); }
 
 @media (max-width: 720px) {
-  .schedule-app .day { min-height: 64px; padding: 4px 5px; }
+  /* Day cells — prevent shift cards from overflowing horizontally */
+  .schedule-app .day {
+    min-height: 64px; padding: 4px 5px;
+    min-width: 0; overflow: hidden;
+  }
   .schedule-app .day .num { font-size: 11px; }
-  .schedule-app .shift-card { padding: 2px 4px; font-size: 10px; gap: 2px; }
+
+  /* Shift cards — compact + clip + drop hospital name (color stripe is enough) */
+  .schedule-app .shift-card {
+    padding: 2px 4px; font-size: 10px; gap: 2px;
+    min-width: 0; overflow: hidden; flex-wrap: nowrap;
+  }
+  .schedule-app .shift-card .hosp-short { display: none; }
   .schedule-app .shift-card .amt { display: none; }
+  .schedule-app .shift-card .h { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .schedule-app .shift-card .reason { font-size: 9px; }
+
+  /* OFF / NL cards — keep label readable; reason already truncates */
+  .schedule-app .shift-card.OFF { letter-spacing: 0.04em; }
+  .schedule-app .shift-card.NL { letter-spacing: 0.03em; font-size: 9px; }
+  .schedule-app .nolate-badge { font-size: 8px; }
+
   .schedule-app .cal-dow { padding: 5px; font-size: 10px; text-align: center; }
+
+  /* Topbar — allow wrap and trim noise */
+  .schedule-app .topbar { flex-wrap: wrap; height: auto; padding: 8px 12px; row-gap: 4px; gap: 6px; }
+  .schedule-app .topbar .subtle { display: none; }
+  .schedule-app .topbar h1 { font-size: 15px; }
+
+  /* Pace strip — drop the redundant Goal + Year-end stats so the bar fits */
+  .schedule-app .pace-strip { gap: 8px; padding: 8px 12px; }
+  .schedule-app .pace-strip > .pace-stat:nth-of-type(2),
+  .schedule-app .pace-strip > .pace-stat:nth-of-type(3) { display: none; }
+  .schedule-app .pace-stat .val { font-size: 13px; }
+
+  /* Toolbar — wrap nicely; status chips stay together with No-Late/Off */
+  .schedule-app .toolbar { gap: 6px; padding: 8px 12px; row-gap: 6px; }
+
+  /* Month dividers — allow the meta to wrap to its own line */
+  .schedule-app .month-divider {
+    flex-wrap: wrap; padding: 18px 12px 8px; gap: 8px;
+    position: sticky; top: 28px;
+  }
+  .schedule-app .month-divider h2 { font-size: 18px; }
+  .schedule-app .month-divider .meta { flex-basis: 100%; font-size: 11px; }
+  .schedule-app .month-divider .actions { margin-left: 0; }
+
+  /* Drawer + hospital edit grids */
   .schedule-app .drawer-inner { grid-template-columns: repeat(2, 1fr); padding: 12px; gap: 10px; }
+  .schedule-app .drawer-card .val { font-size: 18px; }
   .schedule-app .hosp-edit-grid { grid-template-columns: 1fr 1fr; }
   .schedule-app .add-hosp-grid { grid-template-columns: 60px 1fr; }
+
+  /* Settings modal — full-width on phones */
+  .schedule-app .settings-modal { width: calc(100% - 16px); max-height: calc(100% - 24px); }
 }
