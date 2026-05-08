@@ -597,13 +597,14 @@ function PaceStrip({
 // ---------- Drawer ----------
 
 function Drawer({
-  open, schedule, lookup, annualGoal, earnedYTD, w2WeeklyHours,
+  open, schedule, lookup, annualGoal, earnedYTD, hoursYTD, w2WeeklyHours,
 }: {
   open: boolean
   schedule: Schedule
   lookup: Record<string, Hospital>
   annualGoal: number
   earnedYTD: number
+  hoursYTD: number
   w2WeeklyHours: number
 }) {
   const today = todayKey()
@@ -611,23 +612,23 @@ function Drawer({
   const delta = earnedYTD - expected
   const todayP = parseKey(today)
 
-  // Walk the year once, collecting all stats we need.
+  // Walk the year once, collecting all stats we need. Past entries in the
+  // schedule are ignored for hour and gross totals — the manual hoursYTD /
+  // earnedYTD baselines cover them, exactly like the money path.
   let futureGross = 0
+  let futureHours = 0
   let paidShiftCount = 0
   let paidShiftGross = 0
-  let scheduledHours = 0
   for (const k in schedule) {
     const p = parseKey(k)
     if (p.y !== todayP.y) continue
     const s = schedule[k]
     if (isUncountedShift(s)) continue
-    if (k > today) futureGross += shiftAmount(s, lookup)
     paidShiftCount++
     paidShiftGross += shiftAmount(s, lookup)
-    scheduledHours += s.h
-    if (s.ocOverlay) {
-      // The on-call overlay is uncounted income but still "hours committed" —
-      // skip it for the W2-comparison hours since on-call isn't an active shift.
+    if (k > today) {
+      futureGross += shiftAmount(s, lookup)
+      futureHours += s.h
     }
   }
 
@@ -642,11 +643,11 @@ function Drawer({
       : (Object.values(lookup).reduce((m, h) => Math.max(m, h.rate), 0) || 233) * 12
   const shiftsToGoal = remaining > 0 && avgShiftGross > 0 ? Math.ceil(remaining / avgShiftGross) : 0
 
-  // W2 comparison: a full-time W2 would work `w2WeeklyHours × 52` over the
-  // year. Subtract what's actually scheduled, divide by the weekly baseline,
-  // and that's how many weeks of "vacation" you're effectively taking.
+  // W2 comparison: total worked = hoursYTD baseline + future scheduled hours.
+  // A full-time W2 would work `w2WeeklyHours × 52`. Difference / baseline = weeks of vacation.
   const w2YearHours = Math.max(1, w2WeeklyHours) * 52
-  const weeksOffVsW2 = (w2YearHours - scheduledHours) / Math.max(1, w2WeeklyHours)
+  const totalHours = hoursYTD + futureHours
+  const weeksOffVsW2 = (w2YearHours - totalHours) / Math.max(1, w2WeeklyHours)
 
   return (
     <div className="drawer" style={{ maxHeight: open ? 360 : 0 }}>
@@ -672,7 +673,9 @@ function Drawer({
         <div className="drawer-card">
           <div className="lbl">Weeks off vs W2</div>
           <div className="val mono">{weeksOffVsW2 >= 0 ? weeksOffVsW2.toFixed(1) : `−${Math.abs(weeksOffVsW2).toFixed(1)}`}</div>
-          <div className="sub">{Math.round(scheduledHours)}h scheduled / {w2YearHours}h ({w2WeeklyHours}h × 52)</div>
+          <div className="sub">
+            {Math.round(totalHours)}h total ({Math.round(hoursYTD)}h YTD + {Math.round(futureHours)}h scheduled) / {w2YearHours}h ({w2WeeklyHours}h × 52)
+          </div>
           <div className={'delta ' + (weeksOffVsW2 < 0 ? 'ahead' : 'behind')}>
             {weeksOffVsW2 < 0
               ? `Working ${Math.abs(weeksOffVsW2).toFixed(1)} more weeks than W2`
@@ -1507,7 +1510,7 @@ function SettingsModal({
             <div className="settings-row">
               <div className="row-label">
                 <span className="name">Earned this year</span>
-                <span className="meta">paid YTD baseline</span>
+                <span className="meta">paid YTD baseline ($)</span>
               </div>
               <input
                 className="s-input"
@@ -1516,6 +1519,21 @@ function SettingsModal({
                 step={100}
                 value={settings.earnedYTD}
                 onChange={(e) => setSettings({ ...settings, earnedYTD: Number(e.target.value) || 0 })}
+                style={{ width: 120 }}
+              />
+            </div>
+            <div className="settings-row">
+              <div className="row-label">
+                <span className="name">Hours worked this year</span>
+                <span className="meta">paid YTD baseline (hrs)</span>
+              </div>
+              <input
+                className="s-input"
+                type="number"
+                min={0}
+                step={1}
+                value={settings.hoursYTD ?? 0}
+                onChange={(e) => setSettings({ ...settings, hoursYTD: Number(e.target.value) || 0 })}
                 style={{ width: 120 }}
               />
             </div>
@@ -2036,6 +2054,7 @@ export function ScheduleClient({
             lookup={lookup}
             annualGoal={settings.annualGoal}
             earnedYTD={settings.earnedYTD}
+            hoursYTD={settings.hoursYTD ?? 0}
             w2WeeklyHours={settings.w2WeeklyHours ?? 36}
           />
         )}

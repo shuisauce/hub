@@ -42,6 +42,9 @@ export type ScheduleSettings = {
   annualGoal: number
   /** Manually entered "I've earned this much YTD" baseline. */
   earnedYTD: number
+  /** Manually entered "I've worked this many paid hours YTD" baseline.
+   * Future scheduled hours are added on top of it for the W2 comparison. */
+  hoursYTD: number
   /** Hours per week a comparable full-time W2 would work. Used for the
    * "weeks off vs W2" stat. Default 36. */
   w2WeeklyHours: number
@@ -69,6 +72,7 @@ export const DEFAULT_SETTINGS: ScheduleSettings = {
   ],
   annualGoal: 285000,
   earnedYTD: 0,
+  hoursYTD: 0,
   w2WeeklyHours: 36,
 }
 
