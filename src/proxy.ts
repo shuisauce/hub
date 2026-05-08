@@ -1,18 +1,37 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getIronSession } from 'iron-session';
-import { sessionOptions, SessionData } from '@/lib/session';
+import { NextResponse, type NextRequest } from 'next/server'
+import { jwtVerify } from 'jose'
+import { COOKIE_NAME } from '@/lib/session'
 
-export async function proxy(req: NextRequest) {
-  const res = NextResponse.next();
-  const session = await getIronSession<SessionData>(req, res, sessionOptions);
+async function isValidSession(token: string | undefined): Promise<boolean> {
+  if (!token) return false
+  const secret = process.env.SESSION_SECRET
+  if (!secret) return false
+  try {
+    await jwtVerify(token, new TextEncoder().encode(secret), {
+      algorithms: ['HS256'],
+    })
+    return true
+  } catch {
+    return false
+  }
+}
 
-  if (!session.isLoggedIn) {
-    return NextResponse.redirect(new URL('/login', req.url));
+export default async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl
+  const token = request.cookies.get(COOKIE_NAME)?.value
+  const valid = await isValidSession(token)
+
+  if (pathname === '/login') {
+    if (valid) return NextResponse.redirect(new URL('/', request.url))
+    return NextResponse.next()
   }
 
-  return res;
+  if (!valid) {
+    return NextResponse.redirect(new URL('/login', request.url))
+  }
+  return NextResponse.next()
 }
 
 export const config = {
-  matcher: ['/((?!login|api/login|_next/static|_next/image|favicon.ico).*)'],
-};
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.svg$).*)'],
+}
