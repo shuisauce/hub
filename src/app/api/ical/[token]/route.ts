@@ -61,12 +61,15 @@ export async function GET(
   for (const date of dates) {
     const entry = schedule[date]
     if (!entry) continue
+    const status = entry.status ?? 'planned'
+    const statusLabel = status === 'planned' ? '' : ` · ${status.charAt(0).toUpperCase() + status.slice(1)}`
+
     if (entry.hosp === 'OFF') {
       cal.createEvent({
         start: parseLocal(date, '00:00'),
         allDay: true,
         summary: entry.label ? `OFF · ${entry.label}` : 'OFF',
-        description: entry.label ? `Unavailable — ${entry.label}` : 'Unavailable',
+        description: (entry.label ? `Unavailable — ${entry.label}` : 'Unavailable') + statusLabel,
         busystatus: ICalEventBusyStatus.FREE,
         id: `off-${date}`,
       })
@@ -87,7 +90,9 @@ export async function GET(
         start: parseLocal(date, '00:00'),
         allDay: true,
         summary: entry.noLateLabel ? `No Late · ${entry.noLateLabel}` : 'No Late',
-        description: entry.noLateLabel ? `Can't work a late shift — ${entry.noLateLabel}` : "Can't work a late shift",
+        description:
+          (entry.noLateLabel ? `Can't work a late shift — ${entry.noLateLabel}` : "Can't work a late shift")
+          + statusLabel,
         busystatus: ICalEventBusyStatus.FREE,
         id: `nolate-${date}`,
       })
@@ -103,7 +108,7 @@ export async function GET(
       end: bounds.end,
       summary,
       description: hosp
-        ? `${hosp.name} · $${hosp.rate}/hr${entry.noLate ? ' · No Late constraint' : ''}`
+        ? `${hosp.name} · $${hosp.rate}/hr${entry.noLate ? ' · No Late constraint' : ''}${statusLabel}`
         : '',
       id: `shift-${date}`,
     })

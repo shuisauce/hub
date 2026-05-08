@@ -18,6 +18,7 @@ import {
   type Schedule,
   type ScheduleSettings,
   type ShiftEntry,
+  type ShiftStatus,
 } from '@/lib/schedule-db'
 import {
   clearMonthAction,
@@ -229,6 +230,62 @@ function buildPaceMap(
   return map
 }
 
+// ---------- Status helpers ----------
+
+const STATUS_LABELS: Record<ShiftStatus, string> = {
+  planned: 'Planned · not sent',
+  sent: 'Sent · not yet approved',
+  approved: 'Approved · not yet posted',
+  posted: 'Posted on official schedule',
+}
+
+const STATUS_EMOJI: Record<ShiftStatus, string> = {
+  planned: '🔴',
+  sent: '🟡',
+  approved: '🟢',
+  posted: '🔵',
+}
+
+const STATUSES: ShiftStatus[] = ['planned', 'sent', 'approved', 'posted']
+
+function normalizeStatus(raw: unknown): ShiftStatus {
+  if (raw === 'sent' || raw === 'approved' || raw === 'posted') return raw
+  return 'planned'
+}
+
+function renderStatusMark(status: ShiftStatus): ReactElement {
+  return (
+    <span className="status-mark" title={STATUS_LABELS[status]}>
+      {STATUS_EMOJI[status]}
+    </span>
+  )
+}
+
+function StatusSelector({
+  value, onChange,
+}: {
+  value: ShiftStatus
+  onChange: (next: ShiftStatus) => void
+}) {
+  return (
+    <div className="popup-row">
+      <span className="label">Status</span>
+      <div className="chip-group" style={{ alignSelf: 'flex-start', flexWrap: 'wrap' }}>
+        {STATUSES.map((s) => (
+          <button
+            key={s}
+            className={'chip' + (value === s ? ' active' : '')}
+            onClick={() => onChange(s)}
+            title={STATUS_LABELS[s]}
+          >
+            {STATUS_EMOJI[s]} {s.charAt(0).toUpperCase() + s.slice(1)}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ---------- Exports (CSV + .ics download) ----------
 
 function triggerDownload(filename: string, content: string, mime: string) {
@@ -256,10 +313,10 @@ function exportCSV(schedule: Schedule, settings: ScheduleSettings, audience: Csv
   if (audience === 'work') return exportWorkCSV(schedule, settings)
   const lookup = makeHospLookup(settings.hospitals)
   const rows: (string | number)[][] = [
-    ['Date', 'Day', 'Type', 'Hospital', 'Hospital ID', 'Hours', 'Label', 'Rate', 'Gross', 'On-call', 'No Late', 'No-Late reason'],
+    ['Date', 'Day', 'Type', 'Hospital', 'Hospital ID', 'Hours', 'Label', 'Rate', 'Gross', 'On-call', 'No Late', 'No-Late reason', 'Status'],
   ]
   const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-  const emit = (key: string, s: ShiftEntry, isOverlay: boolean, noLate: boolean, noLateLabel: string) => {
+  const emit = (key: string, s: ShiftEntry, isOverlay: boolean, noLate: boolean, noLateLabel: string, status: string) => {
     const p = parseKey(key)
     const dt = new Date(p.y, p.m, p.d)
     const hosp = lookup[s.hosp]
@@ -282,14 +339,16 @@ function exportCSV(schedule: Schedule, settings: ScheduleSettings, audience: Csv
       isOc ? 'yes' : '',
       noLate ? 'yes' : '',
       noLateLabel,
+      status,
     ])
   }
   Object.keys(schedule).sort().forEach((k) => {
     const s = schedule[k]
     if (!s) return
     const nlLabel = s.hosp === 'NL' ? (s.noLateLabel ?? '') : (s.noLate ? (s.noLateLabel ?? '') : '')
-    emit(k, s, false, !!s.noLate || s.hosp === 'NL', nlLabel)
-    if (s.ocOverlay) emit(k, { hosp: s.ocOverlay.hosp, h: s.ocOverlay.h, label: s.ocOverlay.label }, true, false, '')
+    const status = normalizeStatus(s.status)
+    emit(k, s, false, !!s.noLate || s.hosp === 'NL', nlLabel, status)
+    if (s.ocOverlay) emit(k, { hosp: s.ocOverlay.hosp, h: s.ocOverlay.h, label: s.ocOverlay.label }, true, false, '', status)
   })
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n')
   triggerDownload('schedule-personal-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv')
@@ -409,13 +468,16 @@ function exportICS(schedule: Schedule, settings: ScheduleSettings) {
       dtStart = 'DTSTART;TZID=America/Detroit:' + startStr
       dtEnd = 'DTEND;TZID=America/Detroit:' + endStr
     }
-    const desc = isOff
+    const normStatus = normalizeStatus(s.status)
+    const statusLabel = normStatus === 'planned' ? '' : ` · ${normStatus.charAt(0).toUpperCase() + normStatus.slice(1)}`
+    const desc = (isOff
       ? (s.label ? `Unavailable — ${s.label}` : 'Unavailable')
       : isNL
         ? "Can't work a late shift"
         : isOc
           ? `${hosp?.name ?? s.hosp} on-call`
-          : `${hosp?.name ?? s.hosp} · ${s.h || 0}h · $${(((hosp?.rate ?? 0) * (s.h || 0))).toLocaleString()}${s.noLate ? ' · No Late' : ''}`
+          : `${hosp?.name ?? s.hosp} · ${s.h || 0}h · $${(((hosp?.rate ?? 0) * (s.h || 0))).toLocaleString()}${s.noLate ? ' · No Late' : ''}`)
+      + statusLabel
     lines.push(
       'BEGIN:VEVENT',
       'UID:' + uid,
@@ -508,6 +570,9 @@ type PaintState = {
   mode: 'add' | 'erase'
   label?: string | null
   oc?: boolean
+  /** When hosp === 'STATUS', this is the status that gets stamped onto each
+   * existing entry the user paints across. */
+  statusValue?: ShiftStatus
 }
 
 // ---------- PaceStrip ----------
@@ -707,22 +772,30 @@ function PaintToolbar({
   hourOptions: HourOption[]
   onOpenSettings: () => void
 }) {
-  const setHosp = (hosp: string) => setPaint({ ...paint, hosp })
+  const setHosp = (hosp: string) => setPaint({ ...paint, hosp, statusValue: undefined })
   const clear = () => setPaint({ active: false, hosp: paint.hosp, hours: paint.hours, mode: 'add' })
   const setMode = (mode: 'add' | 'erase') => setPaint({ ...paint, mode, active: true })
   const toggleOff = () => {
     if (paint.active && paint.hosp === 'OFF') clear()
-    else setPaint({ ...paint, hosp: 'OFF', mode: 'add', active: true })
+    else setPaint({ ...paint, hosp: 'OFF', mode: 'add', active: true, statusValue: undefined })
   }
   const toggleNoLate = () => {
     if (paint.active && paint.hosp === 'NL') clear()
-    else setPaint({ ...paint, hosp: 'NL', mode: 'add', active: true })
+    else setPaint({ ...paint, hosp: 'NL', mode: 'add', active: true, statusValue: undefined })
+  }
+  const toggleStatus = (value: ShiftStatus) => {
+    if (paint.active && paint.hosp === 'STATUS' && paint.statusValue === value) clear()
+    else setPaint({ ...paint, hosp: 'STATUS', statusValue: value, mode: 'add', active: true })
   }
   const visibleHosps = hospitals.filter(h => h.enabled !== false)
   const offArmed = paint.active && paint.hosp === 'OFF'
   const noLateArmed = paint.active && paint.hosp === 'NL'
+  const statusArmed = (v: ShiftStatus) =>
+    paint.active && paint.hosp === 'STATUS' && paint.statusValue === v
   const isPainting =
-    paint.active && paint.hosp && (paint.hosp === 'OFF' || paint.hosp === 'NL' || paint.hours)
+    paint.active &&
+    paint.hosp &&
+    (paint.hosp === 'OFF' || paint.hosp === 'NL' || paint.hosp === 'STATUS' || paint.hours)
 
   return (
     <div className="toolbar">
@@ -780,7 +853,9 @@ function PaintToolbar({
             ? 'Erasing shifts'
             : paint.hosp === 'OFF'
               ? 'Painting OFF days'
-              : `Painting ${paint.hours}h ${paint.hosp}`}
+              : paint.hosp === 'STATUS' && paint.statusValue
+                ? `Marking ${STATUS_EMOJI[paint.statusValue]} ${paint.statusValue}`
+                : `Painting ${paint.hours}h ${paint.hosp}`}
           <button className="iconbtn" style={{ width: 18, height: 18, marginLeft: 4 }} onClick={(e) => { e.stopPropagation(); clear() }}>
             <Icon name="x" size={12} />
           </button>
@@ -792,6 +867,20 @@ function PaintToolbar({
         </div>
       )}
       <span style={{ flex: 1 }} />
+      <span className="label" style={{ marginLeft: 4 }}>Mark</span>
+      <div className="chip-group" title="Status paint — drag across days to mark them all at once">
+        {STATUSES.map((s) => (
+          <button
+            key={s}
+            className={'chip' + (statusArmed(s) ? ' active' : '')}
+            onClick={() => toggleStatus(s)}
+            title={STATUS_LABELS[s]}
+          >
+            {STATUS_EMOJI[s]}
+          </button>
+        ))}
+      </div>
+      <div className="divider" />
       <button
         className={'paint-nolate' + (noLateArmed ? ' armed' : '')}
         onClick={toggleNoLate}
@@ -845,9 +934,11 @@ function DayCell({
   if (isFirstOfMonth) cls.push('first-of-month')
 
   const renderShiftCard = (s: ShiftEntry, asOverlay = false): ReactElement | null => {
+    const status = normalizeStatus(s.status)
     if (s.hosp === 'OFF') {
       return (
         <div key="off" className="shift-card OFF">
+          {renderStatusMark(status)}
           <span>OFF</span>
           {s.label && <span className="reason">· {s.label}</span>}
         </div>
@@ -856,6 +947,7 @@ function DayCell({
     if (s.hosp === 'NL') {
       return (
         <div key="nl" className="shift-card NL">
+          {renderStatusMark(status)}
           <span>NO LATE</span>
           {s.noLateLabel && <span className="reason">· {s.noLateLabel}</span>}
         </div>
@@ -874,7 +966,12 @@ function DayCell({
       : undefined
     const showDot = !asOverlay && !isOc && s.hosp !== 'OFF' && paceInfo
     return (
-      <div key={asOverlay ? 'oc' : 'main'} className={`shift-card ${h.id} ${isOc ? 'oc' : ''}`} style={style}>
+      <div
+        key={asOverlay ? 'oc' : 'main'}
+        className={`shift-card ${h.id} ${isOc ? 'oc' : ''}`}
+        style={style}
+      >
+        {!asOverlay && renderStatusMark(status)}
         {showDot && (
           <span
             className="pace-dot"
@@ -1133,6 +1230,7 @@ function DayPopup({
   const [hours, setHours] = useState<number>(existing?.h && existing.h ? existing.h : 12)
   const [noLate, setNoLate] = useState<boolean>(!!existing?.noLate)
   const [noLateLabel, setNoLateLabel] = useState<string>(existing?.noLateLabel ?? '')
+  const [status, setStatus] = useState<ShiftStatus>(normalizeStatus(existing?.status))
 
   const hospObj = hospitals.find((h) => h.id === hosp)
   const amt = hospObj ? hospObj.rate * hours : 0
@@ -1145,6 +1243,7 @@ function DayPopup({
       entry.noLate = true
       if (noLateLabel.trim()) entry.noLateLabel = noLateLabel.trim()
     }
+    if (status !== 'planned') entry.status = status
     onSave(k, entry)
     onClose()
   }
@@ -1213,6 +1312,7 @@ function DayPopup({
               />
             )}
           </div>
+          <StatusSelector value={status} onChange={setStatus} />
           <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>Estimated gross</span>
             <span className="mono" style={{ fontSize: 18, fontWeight: 700 }}>{fmtMoney(amt)}</span>
@@ -1243,6 +1343,7 @@ function OffReasonPopup({
   onClose: () => void
 }) {
   const [reason, setReason] = useState(existing.label ?? '')
+  const [status, setStatus] = useState<ShiftStatus>(normalizeStatus(existing.status))
   const [applyToRange, setApplyToRange] = useState(stretch.length > 1)
 
   const save = () => {
@@ -1253,6 +1354,7 @@ function OffReasonPopup({
     }
     const next: ShiftEntry = { hosp: 'OFF', h: 0 }
     if (trimmed) next.label = trimmed
+    if (status !== 'planned') next.status = status
     onSave(next)
   }
 
@@ -1299,6 +1401,7 @@ function OffReasonPopup({
               </label>
             </div>
           )}
+          <StatusSelector value={status} onChange={setStatus} />
         </div>
         <div className="popup-foot">
           <button className="btn danger" onClick={onDelete}><Icon name="trash" size={12} /> Clear OFF</button>
@@ -1323,10 +1426,12 @@ function NoLateReasonPopup({
   onClose: () => void
 }) {
   const [reason, setReason] = useState(existing.noLateLabel ?? '')
+  const [status, setStatus] = useState<ShiftStatus>(normalizeStatus(existing.status))
 
   const save = () => {
     const next: ShiftEntry = { hosp: 'NL', h: 0 }
     if (reason.trim()) next.noLateLabel = reason.trim()
+    if (status !== 'planned') next.status = status
     onSave(next)
   }
 
@@ -1351,6 +1456,7 @@ function NoLateReasonPopup({
               style={{ height: 38, fontSize: 14 }}
             />
           </div>
+          <StatusSelector value={status} onChange={setStatus} />
         </div>
         <div className="popup-foot">
           <button className="btn danger" onClick={onDelete}><Icon name="trash" size={12} /> Clear</button>
@@ -1888,6 +1994,18 @@ export function ScheduleClient({
       return false
     }
     if (!p.hosp) return false
+    if (p.hosp === 'STATUS') {
+      const ex = cur[key]
+      if (!ex) return false
+      const target = p.statusValue ?? 'planned'
+      const currentStatus = normalizeStatus(ex.status)
+      if (currentStatus === target) return false
+      const next: ShiftEntry = { ...ex }
+      if (target === 'planned') delete next.status
+      else next.status = target
+      setSchedule({ ...cur, [key]: next })
+      return true
+    }
     if (p.hosp !== 'OFF' && p.hosp !== 'NL' && !p.hours) return false
     const ex = cur[key]
 
@@ -1896,6 +2014,7 @@ export function ScheduleClient({
       nextEntry = { hosp: 'OFF', h: 0 }
       if (ex && ex.hosp === 'OFF' && ex.label) nextEntry.label = ex.label
       if (ex && ex.hosp === 'OFF' && ex.noLate) nextEntry.noLate = true
+      if (ex && ex.hosp === 'OFF' && ex.status) nextEntry.status = ex.status
     } else if (p.hosp === 'NL') {
       if (!ex) {
         nextEntry = { hosp: 'NL', h: 0 }
@@ -1906,6 +2025,7 @@ export function ScheduleClient({
       } else {
         nextEntry = { ...ex, noLate: true }
         if (ex.noLateLabel) nextEntry.noLateLabel = ex.noLateLabel
+        // status preserved via spread
       }
     } else {
       const hours = p.hours
@@ -1928,6 +2048,7 @@ export function ScheduleClient({
         let preservedOc: ShiftEntry['ocOverlay'] | null = null
         let preservedNoLate = false
         let preservedNoLateLabel: string | undefined
+        let preservedStatus: ShiftStatus | undefined
         if (ex && ex.hosp !== 'OFF' && ex.hosp !== 'NL') {
           if (ex.oc && !ex.ocOverlay) {
             preservedOc = { hosp: ex.hosp, h: ex.h }
@@ -1937,13 +2058,16 @@ export function ScheduleClient({
           }
           preservedNoLate = !!ex.noLate
           preservedNoLateLabel = ex.noLateLabel
+          preservedStatus = ex.status
         } else if (ex?.hosp === 'NL') {
           preservedNoLate = true
           preservedNoLateLabel = ex.noLateLabel
+          preservedStatus = ex.status
         }
         nextEntry = preservedOc ? { ...newRegular, ocOverlay: preservedOc } : newRegular
         if (preservedNoLate) nextEntry.noLate = true
         if (preservedNoLateLabel) nextEntry.noLateLabel = preservedNoLateLabel
+        if (preservedStatus) nextEntry.status = preservedStatus
       }
     }
 

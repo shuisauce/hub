@@ -16,6 +16,14 @@ export type HourOption =
   | number
   | { label: string; hours: number; oc?: boolean; start?: string; end?: string }
 
+/** Workflow state for a shift / OFF / NL entry:
+ *  - planned:  on your calendar, not yet sent to your scheduler (default) — 🔴
+ *  - sent:     given to the scheduler, not yet approved — 🟡
+ *  - approved: scheduler said yes, not yet on the official schedule — 🟢
+ *  - posted:   confirmed on the official schedule — 🔵
+ */
+export type ShiftStatus = 'planned' | 'sent' | 'approved' | 'posted'
+
 export type ShiftEntry = {
   hosp: string
   h: number
@@ -25,6 +33,8 @@ export type ShiftEntry = {
   noLate?: boolean
   /** Free-text reason for the No Late constraint, e.g. "concert at 8pm". */
   noLateLabel?: string
+  /** Approval/posting workflow state. Absent or 'planned' = default. */
+  status?: ShiftStatus
   ocOverlay?: { hosp: string; h: number; label?: string }
 }
 
