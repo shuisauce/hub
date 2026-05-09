@@ -705,10 +705,12 @@ function Drawer({
   let paidShiftCount = 0
   let paidShiftGross = 0
   let lastFutureKey: string | null = null
+  let futureOffDays = 0
   for (const k in schedule) {
     const p = parseKey(k)
     if (p.y !== todayP.y) continue
     const s = schedule[k]
+    if (s.hosp === 'OFF' && k > today) futureOffDays++
     if (isUncountedShift(s)) continue
     paidShiftCount++
     paidShiftGross += shiftAmount(s, lookup)
@@ -786,29 +788,36 @@ function Drawer({
         <div className="drawer-card">
           <div className="lbl">Can I take tomorrow off?</div>
           {(() => {
-            // Pace-relative balance: where am I RIGHT NOW vs where I should be?
-            // Answer in 8h-shift units so the count maps directly to "days off".
-            const ytdShiftBalance = dayOffCost > 0 ? (earnedYTD - expected) / dayOffCost : 0
-            const aheadCount = Math.floor(ytdShiftBalance)
-            const behindCount = Math.ceil(-ytdShiftBalance)
-            const cushionVsPace = earnedYTD - expected
-            if (ytdShiftBalance >= 1) {
+            // Year-end projection cushion. Already includes scheduled OFF days
+            // implicitly — they contribute zero to futureGross, so a vacation
+            // booked for August automatically lowers the projected year-end.
+            const cushion = projected - annualGoal
+            const shiftBalance = dayOffCost > 0 ? cushion / dayOffCost : 0
+            const aheadCount = Math.floor(shiftBalance)
+            const behindCount = Math.ceil(-shiftBalance)
+            const offHint =
+              futureOffDays > 0
+                ? ` · ${futureOffDays} OFF day${futureOffDays === 1 ? '' : 's'} planned`
+                : ''
+            if (shiftBalance >= 1) {
               return (
                 <>
                   <div className="val mono" style={{ color: 'var(--positive)' }}>
                     ✓ +{aheadCount} shift{aheadCount === 1 ? '' : 's'}
                   </div>
-                  <div className="sub">+{fmtMoneyShort(cushionVsPace)} vs today&rsquo;s pace · 8h × ${safeDayOffRate}/hr</div>
-                  <div className="delta ahead">Yes — you can take tomorrow off</div>
+                  <div className="sub">
+                    Year-end {fmtMoneyShort(projected)} / {fmtMoneyShort(annualGoal)} goal{offHint}
+                  </div>
+                  <div className="delta ahead">Yes — even with the vacations, you have room</div>
                 </>
               )
             }
-            if (ytdShiftBalance > -1) {
+            if (shiftBalance > -1) {
               return (
                 <>
-                  <div className="val mono">On pace</div>
+                  <div className="val mono">On track</div>
                   <div className="sub">
-                    {cushionVsPace >= 0 ? '+' : '−'}{fmtMoneyShort(Math.abs(cushionVsPace))} vs today&rsquo;s pace · within one shift
+                    Year-end {fmtMoneyShort(projected)} · within one shift of goal{offHint}
                   </div>
                   <div className="delta">Cutting it close — depends on what&rsquo;s already booked</div>
                 </>
@@ -819,8 +828,12 @@ function Drawer({
                 <div className="val mono" style={{ color: 'var(--accent)' }}>
                   ✗ −{behindCount} shift{behindCount === 1 ? '' : 's'}
                 </div>
-                <div className="sub">−{fmtMoneyShort(-cushionVsPace)} vs today&rsquo;s pace · 8h × ${safeDayOffRate}/hr</div>
-                <div className="delta behind">No — you&rsquo;re behind, don&rsquo;t skip a shift</div>
+                <div className="sub">
+                  Year-end {fmtMoneyShort(projected)} / {fmtMoneyShort(annualGoal)} goal{offHint}
+                </div>
+                <div className="delta behind">
+                  No — {futureOffDays > 0 ? 'vacation will leave you short' : 'already on track to fall short'}
+                </div>
               </>
             )
           })()}
