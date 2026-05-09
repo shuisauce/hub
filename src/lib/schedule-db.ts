@@ -61,6 +61,9 @@ export type ScheduleSettings = {
   /** Hourly rate to assume for offered-off shifts. Used by the "Day off check"
    * dashboard card. Default 190 (typical 8h shift rate). */
   dayOffRate: number
+  /** When false (default), the calendar archives months prior to the current
+   * one so it always opens to "today and forward." Toggle on to scroll back. */
+  showPastMonths: boolean
 }
 
 export const DEFAULT_SETTINGS: ScheduleSettings = {
@@ -88,6 +91,7 @@ export const DEFAULT_SETTINGS: ScheduleSettings = {
   hoursYTD: 0,
   w2WeeklyHours: 36,
   dayOffRate: 190,
+  showPastMonths: false,
 }
 
 let cachedSql: ReturnType<typeof neon> | null = null

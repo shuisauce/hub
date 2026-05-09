@@ -116,12 +116,13 @@ function maxScheduleKey() {
   return dateKey(d.getFullYear(), d.getMonth(), d.getDate())
 }
 
-// 3 months of history + current + 12 months ahead. ISO date strings sort
+// 12 months ahead, plus optionally 3 months of history. ISO date strings sort
 // lexically, so `cellKey > maxScheduleKey()` cleanly disables cells past the limit.
-function visibleMonths(): { y: number; m: number }[] {
+function visibleMonths(showPast: boolean): { y: number; m: number }[] {
   const today = new Date()
+  const start = showPast ? -3 : 0
   const out: { y: number; m: number }[] = []
-  for (let i = -3; i <= 12; i++) {
+  for (let i = start; i <= 12; i++) {
     const d = new Date(today.getFullYear(), today.getMonth() + i, 1)
     out.push({ y: d.getFullYear(), m: d.getMonth() })
   }
@@ -1664,6 +1665,19 @@ function SettingsModal({
                 <button className={'chip' + (settings.theme === 'dark' ? ' active' : '')} onClick={() => setSettings({ ...settings, theme: 'dark' })}>Dark</button>
               </div>
             </div>
+            <div className="settings-row">
+              <div className="row-label">
+                <span className="name">Show previous months</span>
+                <span className="meta">past months are archived by default</span>
+              </div>
+              <button
+                className="s-toggle"
+                data-on={!!settings.showPastMonths}
+                onClick={() => setSettings({ ...settings, showPastMonths: !settings.showPastMonths })}
+              >
+                <i />
+              </button>
+            </div>
           </div>
 
           <div className="settings-section">
@@ -1929,7 +1943,10 @@ export function ScheduleClient({
 
   const today = useMemo(() => todayKey(), [])
   const maxKey = useMemo(() => maxScheduleKey(), [])
-  const months = useMemo(() => visibleMonths(), [])
+  const months = useMemo(
+    () => visibleMonths(settings.showPastMonths ?? false),
+    [settings.showPastMonths],
+  )
   const lookup = useMemo(() => makeHospLookup(settings.hospitals), [settings.hospitals])
   const paceMap = useMemo(
     () => buildPaceMap(schedule, lookup, today, settings.earnedYTD, settings.annualGoal),
