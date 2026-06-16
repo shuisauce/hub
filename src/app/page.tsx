@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { requireSession, clearSession } from '@/lib/session'
 import { redirect } from 'next/navigation'
+import { loadCountdown } from '@/lib/hub-db'
+import { CountdownStrip } from '@/components/countdown-strip'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,6 +14,7 @@ async function signOutAction() {
 
 export default async function HubPage() {
   await requireSession()
+  const countdown = await loadCountdown()
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-6 py-10">
@@ -26,6 +29,8 @@ export default async function HubPage() {
           </button>
         </form>
       </header>
+
+      <CountdownStrip initial={countdown} />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Link
@@ -55,6 +60,16 @@ export default async function HubPage() {
           <h2 className="font-medium">Eval</h2>
           <p className="text-sm text-zinc-500">
             Drop end-of-day notes, get six polished EASI comment blocks in your voice.
+          </p>
+        </Link>
+
+        <Link
+          href="/bookmarks"
+          className="flex flex-col gap-1 rounded-lg border border-black/10 p-6 transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5"
+        >
+          <h2 className="font-medium">Bookmarks</h2>
+          <p className="text-sm text-zinc-500">
+            Personal bookmarks, synced. Open from any device.
           </p>
         </Link>
 
