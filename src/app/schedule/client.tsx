@@ -316,10 +316,7 @@ function csvEscape(v: string | number | null | undefined): string {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
 }
 
-type CsvAudience = 'personal' | 'work'
-
-function exportCSV(schedule: Schedule, settings: ScheduleSettings, audience: CsvAudience = 'personal') {
-  if (audience === 'work') return exportWorkCSV(schedule, settings)
+function exportCSV(schedule: Schedule, settings: ScheduleSettings) {
   const today = todayKey()
   const lookup = makeHospLookup(settings.hospitals)
   const rows: (string | number)[][] = [
@@ -369,56 +366,44 @@ function exportCSV(schedule: Schedule, settings: ScheduleSettings, audience: Csv
   triggerDownload('schedule-personal-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv')
 }
 
-// Stripped CSV for schedulers — only the bare scheduling facts (no reasons,
-// rates, or gross). One file per hospital, working days only. Each scheduler
-// only sees the dates that concern their own hospital.
-function exportWorkCSV(schedule: Schedule, settings: ScheduleSettings) {
+// Stripped CSV for schedulers — only the bare scheduling facts for a single
+// hospital (no reasons, rates, or gross). The HFH scheduler doesn't see GR or
+// MCM dates; they only get HFH's.
+function exportWorkCSV(schedule: Schedule, settings: ScheduleSettings, hospId: string) {
   const lookup = makeHospLookup(settings.hospitals)
   const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
   const header = ['Date', 'Day', 'Hospital', 'Hours', 'On-call', 'No Late']
-
-  // hospId -> rows for that hospital
-  const byHosp = new Map<string, (string | number)[][]>()
-  const addRow = (hospId: string, row: (string | number)[]) => {
-    if (!byHosp.has(hospId)) byHosp.set(hospId, [])
-    byHosp.get(hospId)!.push(row)
-  }
+  const rows: (string | number)[][] = [header]
 
   Object.keys(schedule).sort().forEach((k) => {
     const s = schedule[k]
     if (!s) return
     // Skip OFF / NL / anything not actually worked
     if (s.hosp === 'OFF' || s.hosp === 'NL') return
-    if (!(s.h > 0)) return
 
     const p = parseKey(k)
     const dt = new Date(p.y, p.m, p.d)
     const day = dows[dt.getDay()]
-    const hosp = lookup[s.hosp]
-    addRow(s.hosp, [k, day, hosp?.short ?? s.hosp, s.h, s.oc ? 'yes' : '', s.noLate ? 'yes' : ''])
 
-    if (s.ocOverlay && s.ocOverlay.h > 0) {
+    // Primary shift at this hospital
+    if (s.hosp === hospId && s.h > 0) {
+      const hosp = lookup[s.hosp]
+      rows.push([k, day, hosp?.short ?? s.hosp, s.h, s.oc ? 'yes' : '', s.noLate ? 'yes' : ''])
+    }
+
+    // OC overlay at this hospital (when primary is at a different hospital)
+    if (s.ocOverlay && s.ocOverlay.hosp === hospId && s.ocOverlay.h > 0) {
       const oh = lookup[s.ocOverlay.hosp]
-      addRow(s.ocOverlay.hosp, [k, day, oh?.short ?? s.ocOverlay.hosp, s.ocOverlay.h, 'yes', ''])
+      rows.push([k, day, oh?.short ?? s.ocOverlay.hosp, s.ocOverlay.h, 'yes', ''])
     }
   })
 
-  if (byHosp.size === 0) {
-    // Nothing to export — still hand back an empty file so the user sees the
-    // action did something, rather than silently doing nothing.
-    const csv = header.join(',') + '\n'
-    triggerDownload('schedule-work-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv')
-    return
-  }
-
+  const hosp = lookup[hospId]
+  const name = hosp?.short ?? hospId
+  const safe = name.replace(/[^a-z0-9-]+/gi, '_')
   const stamp = new Date().toISOString().slice(0, 10)
-  const safe = (s: string) => s.replace(/[^a-z0-9-]+/gi, '_')
-  for (const [hospId, rows] of byHosp) {
-    const hosp = lookup[hospId]
-    const name = hosp?.short ?? hospId
-    const csv = [header, ...rows].map((r) => r.map(csvEscape).join(',')).join('\n')
-    triggerDownload(`schedule-work-${safe(name)}-${stamp}.csv`, csv, 'text/csv')
-  }
+  const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n')
+  triggerDownload(`schedule-work-${safe}-${stamp}.csv`, csv, 'text/csv')
 }
 
 function pad2(n: number): string {
@@ -2357,8 +2342,9 @@ export function ScheduleClient({
 
         {csvPickerOpen && (
           <CsvPickerPopup
-            onPersonal={() => { exportCSV(schedule, settings, 'personal'); setCsvPickerOpen(false) }}
-            onWork={() => { exportCSV(schedule, settings, 'work'); setCsvPickerOpen(false) }}
+            hospitals={settings.hospitals}
+            onPersonal={() => { exportCSV(schedule, settings); setCsvPickerOpen(false) }}
+            onWork={(hospId) => { exportWorkCSV(schedule, settings, hospId); setCsvPickerOpen(false) }}
             onClose={() => setCsvPickerOpen(false)}
           />
         )}
@@ -2368,41 +2354,77 @@ export function ScheduleClient({
 }
 
 function CsvPickerPopup({
-  onPersonal, onWork, onClose,
+  hospitals, onPersonal, onWork, onClose,
 }: {
+  hospitals: Hospital[]
   onPersonal: () => void
-  onWork: () => void
+  onWork: (hospId: string) => void
   onClose: () => void
 }) {
+  const [mode, setMode] = useState<'choose' | 'pickHosp'>('choose')
+  const activeHosps = hospitals.filter((h) => h.enabled !== false)
+
   return (
     <div className="popup-backdrop" onClick={onClose}>
       <div className="popup" onClick={(e) => e.stopPropagation()}>
         <div className="popup-head">
           <Icon name="download" size={18} />
-          <h3>Download CSV</h3>
+          <h3>{mode === 'choose' ? 'Download CSV' : 'Which scheduler?'}</h3>
           <button className="iconbtn close" onClick={onClose}><Icon name="x" size={16} /></button>
         </div>
         <div className="popup-body">
-          <button
-            className="btn"
-            onClick={onPersonal}
-            style={{ justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start', padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 8, gap: 4 }}
-          >
-            <span style={{ fontWeight: 700, fontSize: 14 }}>Personal — full export</span>
-            <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 400 }}>
-              Every column: hospital name, rate, gross pay, OFF reason, No-Late reason. Use for your own records.
-            </span>
-          </button>
-          <button
-            className="btn"
-            onClick={onWork}
-            style={{ justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start', padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 8, gap: 4 }}
-          >
-            <span style={{ fontWeight: 700, fontSize: 14 }}>Work — for schedulers</span>
-            <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 400 }}>
-              Date · day · hospital · hours · on-call · no-late · OFF. No reasons, no rates, no pay.
-            </span>
-          </button>
+          {mode === 'choose' && (
+            <>
+              <button
+                className="btn"
+                onClick={onPersonal}
+                style={{ justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start', padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 8, gap: 4 }}
+              >
+                <span style={{ fontWeight: 700, fontSize: 14 }}>Personal — full export</span>
+                <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 400 }}>
+                  Every column: hospital name, rate, gross pay, OFF reason, No-Late reason. Use for your own records.
+                </span>
+              </button>
+              <button
+                className="btn"
+                onClick={() => setMode('pickHosp')}
+                style={{ justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start', padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 8, gap: 4 }}
+              >
+                <span style={{ fontWeight: 700, fontSize: 14 }}>Work — for schedulers</span>
+                <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 400 }}>
+                  Pick a hospital. Only that hospital's working dates — date · day · hospital · hours · on-call · no-late.
+                </span>
+              </button>
+            </>
+          )}
+          {mode === 'pickHosp' && (
+            <>
+              {activeHosps.length === 0 && (
+                <div style={{ fontSize: 13, color: 'var(--ink-3)', padding: '8px 2px' }}>
+                  No active hospitals. Enable one in Settings first.
+                </div>
+              )}
+              {activeHosps.map((h) => (
+                <button
+                  key={h.id}
+                  className="btn"
+                  onClick={() => onWork(h.id)}
+                  style={{ justifyContent: 'flex-start', alignItems: 'center', padding: '10px 14px', background: 'var(--surface-2)', borderRadius: 8, gap: 10 }}
+                >
+                  <span style={{ width: 10, height: 10, borderRadius: 999, background: h.color, display: 'inline-block', flex: '0 0 auto' }} />
+                  <span style={{ fontWeight: 700, fontSize: 14 }}>{h.short}</span>
+                  <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 400 }}>{h.name}</span>
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setMode('choose')}
+                style={{ background: 'transparent', border: 'none', color: 'var(--ink-3)', fontSize: 12, padding: '6px 2px 0', textAlign: 'left', cursor: 'pointer' }}
+              >
+                ← Back
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
