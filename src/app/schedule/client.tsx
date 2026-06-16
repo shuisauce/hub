@@ -369,39 +369,56 @@ function exportCSV(schedule: Schedule, settings: ScheduleSettings, audience: Csv
   triggerDownload('schedule-personal-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv')
 }
 
-// Stripped CSV for schedulers — only date + the bare scheduling facts. No
-// reasons, OFF labels, rates, or gross are included.
+// Stripped CSV for schedulers — only the bare scheduling facts (no reasons,
+// rates, or gross). One file per hospital, working days only. Each scheduler
+// only sees the dates that concern their own hospital.
 function exportWorkCSV(schedule: Schedule, settings: ScheduleSettings) {
   const lookup = makeHospLookup(settings.hospitals)
-  const rows: (string | number)[][] = [
-    ['Date', 'Day', 'Hospital', 'Hours', 'On-call', 'No Late', 'OFF'],
-  ]
   const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const header = ['Date', 'Day', 'Hospital', 'Hours', 'On-call', 'No Late']
+
+  // hospId -> rows for that hospital
+  const byHosp = new Map<string, (string | number)[][]>()
+  const addRow = (hospId: string, row: (string | number)[]) => {
+    if (!byHosp.has(hospId)) byHosp.set(hospId, [])
+    byHosp.get(hospId)!.push(row)
+  }
+
   Object.keys(schedule).sort().forEach((k) => {
     const s = schedule[k]
     if (!s) return
+    // Skip OFF / NL / anything not actually worked
+    if (s.hosp === 'OFF' || s.hosp === 'NL') return
+    if (!(s.h > 0)) return
+
     const p = parseKey(k)
     const dt = new Date(p.y, p.m, p.d)
     const day = dows[dt.getDay()]
     const hosp = lookup[s.hosp]
-    const isOff = s.hosp === 'OFF'
-    const isNL = s.hosp === 'NL'
-    if (isOff) {
-      rows.push([k, day, '', 0, '', '', 'yes'])
-      return
-    }
-    if (isNL) {
-      rows.push([k, day, '', 0, '', 'yes', ''])
-      return
-    }
-    rows.push([k, day, hosp?.short ?? s.hosp, s.h || 0, s.oc ? 'yes' : '', s.noLate ? 'yes' : '', ''])
-    if (s.ocOverlay) {
+    addRow(s.hosp, [k, day, hosp?.short ?? s.hosp, s.h, s.oc ? 'yes' : '', s.noLate ? 'yes' : ''])
+
+    if (s.ocOverlay && s.ocOverlay.h > 0) {
       const oh = lookup[s.ocOverlay.hosp]
-      rows.push([k, day, oh?.short ?? s.ocOverlay.hosp, s.ocOverlay.h || 0, 'yes', '', ''])
+      addRow(s.ocOverlay.hosp, [k, day, oh?.short ?? s.ocOverlay.hosp, s.ocOverlay.h, 'yes', ''])
     }
   })
-  const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n')
-  triggerDownload('schedule-work-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv')
+
+  if (byHosp.size === 0) {
+    // Nothing to export — still hand back an empty file so the user sees the
+    // action did something, rather than silently doing nothing.
+    const csv = header.join(',') + '\n'
+    triggerDownload('schedule-work-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv')
+    return
+  }
+
+  const stamp = new Date().toISOString().slice(0, 10)
+  const safe = (s: string) => s.replace(/[^a-z0-9-]+/gi, '_')
+  for (const [hospId, rows] of byHosp) {
+    const hosp = lookup[hospId]
+    const name = hosp?.short ?? hospId
+    const csv = [header, ...rows].map((r) => r.map(csvEscape).join(',')).join('\n')
+    triggerDownload(`schedule-work-${safe(name)}-${stamp}.csv`, csv, 'text/csv')
+  }
 }
 
 function pad2(n: number): string {
