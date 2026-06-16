@@ -85,6 +85,34 @@ function todayKey() {
   return dateKey(d.getFullYear(), d.getMonth(), d.getDate())
 }
 
+function addDaysKey(key: string, days: number): string {
+  const p = parseKey(key)
+  const d = new Date(p.y, p.m, p.d)
+  d.setDate(d.getDate() + days)
+  return dateKey(d.getFullYear(), d.getMonth(), d.getDate())
+}
+
+// HFH blocks are always 6 weeks long, but the gap between request and the
+// next block start varies — schedulers don't follow a strict cadence. So this
+// anchor is just a "best guess" prefill; the picker exposes ± block buttons
+// and an editable start so you can land on the real date the scheduler gives
+// you. Update this whenever you confirm a new block start.
+const HFH_BLOCK_ANCHOR = '2026-08-03'
+const HFH_BLOCK_DAYS = 42
+
+// Best-guess HFH block to prefill the picker with: walk anchor forward in
+// 42-day steps until the end is on or after today, so the prefill is at
+// worst the next consistent-cadence block rather than something in the past.
+function nextHfhBlock(today: string): { start: string; end: string } {
+  let start = HFH_BLOCK_ANCHOR
+  let end = addDaysKey(start, HFH_BLOCK_DAYS - 1)
+  while (end < today) {
+    start = addDaysKey(start, HFH_BLOCK_DAYS)
+    end = addDaysKey(start, HFH_BLOCK_DAYS - 1)
+  }
+  return { start, end }
+}
+
 // Find the contiguous stretch of OFF days that includes `key`. Returns date
 // keys in chronological order — used to label a whole vacation week with one
 // reason in one click.
@@ -368,14 +396,24 @@ function exportCSV(schedule: Schedule, settings: ScheduleSettings) {
 
 // Stripped CSV for schedulers — only the bare scheduling facts for a single
 // hospital (no reasons, rates, or gross). The HFH scheduler doesn't see GR or
-// MCM dates; they only get HFH's.
-function exportWorkCSV(schedule: Schedule, settings: ScheduleSettings, hospId: string) {
+// MCM dates; they only get HFH's. Optional date bounds (YYYY-MM-DD, inclusive)
+// limit the export to a single scheduling block.
+function exportWorkCSV(
+  schedule: Schedule,
+  settings: ScheduleSettings,
+  hospId: string,
+  startKey?: string,
+  endKey?: string,
+) {
   const lookup = makeHospLookup(settings.hospitals)
   const dows = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
   const header = ['Date', 'Day', 'Hospital', 'Hours', 'On-call', 'No Late']
   const rows: (string | number)[][] = [header]
+  const inRange = (k: string) =>
+    (!startKey || k >= startKey) && (!endKey || k <= endKey)
 
   Object.keys(schedule).sort().forEach((k) => {
+    if (!inRange(k)) return
     const s = schedule[k]
     if (!s) return
     // Skip OFF / NL / anything not actually worked
@@ -388,7 +426,7 @@ function exportWorkCSV(schedule: Schedule, settings: ScheduleSettings, hospId: s
     // Primary shift at this hospital
     if (s.hosp === hospId && s.h > 0) {
       const hosp = lookup[s.hosp]
-      rows.push([k, day, hosp?.short ?? s.hosp, s.h, s.oc ? 'yes' : '', s.noLate ? 'yes' : ''])
+      rows.push([k, day, hosp?.short ?? s.hosp, s.h, s.oc ? 'yes' : '', s.noLate ? 'no late' : ''])
     }
 
     // OC overlay at this hospital (when primary is at a different hospital)
@@ -402,8 +440,16 @@ function exportWorkCSV(schedule: Schedule, settings: ScheduleSettings, hospId: s
   const name = hosp?.short ?? hospId
   const safe = name.replace(/[^a-z0-9-]+/gi, '_')
   const stamp = new Date().toISOString().slice(0, 10)
+  const rangeSuffix =
+    startKey && endKey
+      ? `-${startKey}_to_${endKey}`
+      : startKey
+        ? `-from_${startKey}`
+        : endKey
+          ? `-thru_${endKey}`
+          : `-${stamp}`
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n')
-  triggerDownload(`schedule-work-${safe}-${stamp}.csv`, csv, 'text/csv')
+  triggerDownload(`schedule-work-${safe}${rangeSuffix}.csv`, csv, 'text/csv')
 }
 
 function pad2(n: number): string {
@@ -2344,7 +2390,10 @@ export function ScheduleClient({
           <CsvPickerPopup
             hospitals={settings.hospitals}
             onPersonal={() => { exportCSV(schedule, settings); setCsvPickerOpen(false) }}
-            onWork={(hospId) => { exportWorkCSV(schedule, settings, hospId); setCsvPickerOpen(false) }}
+            onWork={(hospId, startKey, endKey) => {
+              exportWorkCSV(schedule, settings, hospId, startKey, endKey)
+              setCsvPickerOpen(false)
+            }}
             onClose={() => setCsvPickerOpen(false)}
           />
         )}
@@ -2358,18 +2407,64 @@ function CsvPickerPopup({
 }: {
   hospitals: Hospital[]
   onPersonal: () => void
-  onWork: (hospId: string) => void
+  onWork: (hospId: string, startKey?: string, endKey?: string) => void
   onClose: () => void
 }) {
-  const [mode, setMode] = useState<'choose' | 'pickHosp'>('choose')
+  const [mode, setMode] = useState<'choose' | 'pickHosp' | 'pickRange'>('choose')
+  const [hospId, setHospId] = useState<string | null>(null)
+  const [startKey, setStartKey] = useState<string>('')
+  const [endKey, setEndKey] = useState<string>('')
   const activeHosps = hospitals.filter((h) => h.enabled !== false)
+  const chosenHosp = hospId ? hospitals.find((h) => h.id === hospId) : null
+
+  function chooseHospital(id: string) {
+    setHospId(id)
+    if (id === 'HFH') {
+      const block = nextHfhBlock(todayKey())
+      setStartKey(block.start)
+      setEndKey(block.end)
+    } else {
+      setStartKey('')
+      setEndKey('')
+    }
+    setMode('pickRange')
+  }
+
+  function download() {
+    if (!hospId) return
+    if (startKey && endKey && startKey > endKey) return // sanity guard
+    onWork(hospId, startKey || undefined, endKey || undefined)
+  }
+
+  // When the user edits the start date, snap the end to start + 41 days so the
+  // 6-week window stays intact. If they want to extend past block end, they
+  // edit the end input *after* the start.
+  function changeStart(next: string) {
+    setStartKey(next)
+    if (next) setEndKey(addDaysKey(next, HFH_BLOCK_DAYS - 1))
+    else setEndKey('')
+  }
+
+  // Shift both dates by ±42 days. Only meaningful when both are set (which is
+  // always true for HFH after a prefill); when one is empty we skip the bump.
+  function shiftBlock(direction: 1 | -1) {
+    if (!startKey || !endKey) return
+    const delta = direction * HFH_BLOCK_DAYS
+    setStartKey(addDaysKey(startKey, delta))
+    setEndKey(addDaysKey(endKey, delta))
+  }
+
+  const title =
+    mode === 'choose' ? 'Download CSV' :
+    mode === 'pickHosp' ? 'Which scheduler?' :
+    `${chosenHosp?.short ?? ''} — date range`
 
   return (
     <div className="popup-backdrop" onClick={onClose}>
       <div className="popup" onClick={(e) => e.stopPropagation()}>
         <div className="popup-head">
           <Icon name="download" size={18} />
-          <h3>{mode === 'choose' ? 'Download CSV' : 'Which scheduler?'}</h3>
+          <h3>{title}</h3>
           <button className="iconbtn close" onClick={onClose}><Icon name="x" size={16} /></button>
         </div>
         <div className="popup-body">
@@ -2392,7 +2487,7 @@ function CsvPickerPopup({
               >
                 <span style={{ fontWeight: 700, fontSize: 14 }}>Work — for schedulers</span>
                 <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 400 }}>
-                  Pick a hospital. Only that hospital's working dates — date · day · hospital · hours · on-call · no-late.
+                  Pick a hospital and a date range. Only that hospital's working dates — date · day · hospital · hours · on-call · no-late.
                 </span>
               </button>
             </>
@@ -2408,7 +2503,7 @@ function CsvPickerPopup({
                 <button
                   key={h.id}
                   className="btn"
-                  onClick={() => onWork(h.id)}
+                  onClick={() => chooseHospital(h.id)}
                   style={{ justifyContent: 'flex-start', alignItems: 'center', padding: '10px 14px', background: 'var(--surface-2)', borderRadius: 8, gap: 10 }}
                 >
                   <span style={{ width: 10, height: 10, borderRadius: 999, background: h.color, display: 'inline-block', flex: '0 0 auto' }} />
@@ -2423,6 +2518,126 @@ function CsvPickerPopup({
               >
                 ← Back
               </button>
+            </>
+          )}
+          {mode === 'pickRange' && chosenHosp && (
+            <>
+              {hospId === 'HFH' && (
+                <div style={{ fontSize: 12, color: 'var(--ink-3)', padding: '2px 2px 8px' }}>
+                  Best-guess prefill. Use ± Block to jump to the real one, then bump the end date if the scheduler wants more.
+                </div>
+              )}
+              {hospId !== 'HFH' && (
+                <div style={{ fontSize: 12, color: 'var(--ink-3)', padding: '2px 2px 8px' }}>
+                  Leave both blank to export all dates for {chosenHosp.short}.
+                </div>
+              )}
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--ink-2)' }}>
+                Start
+                <input
+                  type="date"
+                  value={startKey}
+                  onChange={(e) => changeStart(e.target.value)}
+                  style={{
+                    padding: '8px 10px',
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 6,
+                    color: 'var(--ink-1)',
+                    fontSize: 14,
+                  }}
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--ink-2)' }}>
+                End
+                <input
+                  type="date"
+                  value={endKey}
+                  onChange={(e) => setEndKey(e.target.value)}
+                  style={{
+                    padding: '8px 10px',
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 6,
+                    color: 'var(--ink-1)',
+                    fontSize: 14,
+                  }}
+                />
+              </label>
+              {hospId === 'HFH' && (
+                <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
+                  <button
+                    type="button"
+                    onClick={() => shiftBlock(-1)}
+                    disabled={!startKey || !endKey}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      background: 'var(--surface-2)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 6,
+                      color: 'var(--ink-1)',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: !startKey || !endKey ? 'not-allowed' : 'pointer',
+                      opacity: !startKey || !endKey ? 0.5 : 1,
+                    }}
+                  >
+                    ← Previous block
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => shiftBlock(1)}
+                    disabled={!startKey || !endKey}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      background: 'var(--surface-2)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 6,
+                      color: 'var(--ink-1)',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: !startKey || !endKey ? 'not-allowed' : 'pointer',
+                      opacity: !startKey || !endKey ? 0.5 : 1,
+                    }}
+                  >
+                    Next block →
+                  </button>
+                </div>
+              )}
+              {startKey && endKey && startKey > endKey && (
+                <div style={{ fontSize: 12, color: '#e11d48', padding: '2px 2px' }}>
+                  End date is before start date.
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+                <button
+                  type="button"
+                  onClick={download}
+                  disabled={!!(startKey && endKey && startKey > endKey)}
+                  className="btn"
+                  style={{
+                    padding: '10px 14px',
+                    background: 'var(--accent, #2563eb)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 8,
+                    fontWeight: 700,
+                    fontSize: 14,
+                    flex: 1,
+                  }}
+                >
+                  Download
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('pickHosp')}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--ink-3)', fontSize: 12, padding: '6px 2px', cursor: 'pointer' }}
+                >
+                  ← Back
+                </button>
+              </div>
             </>
           )}
         </div>
