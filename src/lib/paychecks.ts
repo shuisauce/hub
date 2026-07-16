@@ -5,7 +5,8 @@ export type PaycheckShift = {
   /** Which part of the day's entry this row is — the main shift or the OC
    *  overlay riding on it. Needed to write actual hours back to the right spot. */
   source: 'primary' | 'overlay'
-  /** Hours used for pay: actual clocked hours when recorded, planned otherwise. */
+  /** Hours used for pay: actual clocked hours when recorded, planned otherwise.
+   *  For OC rows this is the block hours (retainer basis). */
   hours: number
   plannedHours: number
   hasActual: boolean
@@ -113,31 +114,37 @@ function periodEndsInWindow(hospital: Hospital, from: string, horizon: string): 
 
 // ---------- Shift collection ----------
 
-/** Rows for everything in the schedule belonging to `hospId` on `date`. */
-function shiftRowsFor(hospId: string, rate: number, date: string, s: ShiftEntry): PaycheckShift[] {
+/** Rows for everything in the schedule belonging to hospital `h` on `date`.
+ *  Regular shifts pay rate × effective hours. OC time (OC-flagged primary or
+ *  the OC overlay) pays a flat retainer of ocRate × planned block hours —
+ *  e.g. HFH's $10/h × 12h block = $120. A call-in during OC is recorded as a
+ *  regular shift on the same day, so it pays the normal rate alongside the
+ *  retainer. */
+function shiftRowsFor(h: Hospital, date: string, s: ShiftEntry): PaycheckShift[] {
   const rows: PaycheckShift[] = []
-  if (s.hosp === hospId && s.h > 0) {
-    const hours = effectiveHours(s.h, s.actualH)
+  if (s.hosp === h.id && s.h > 0) {
+    const isOc = !!s.oc
+    const hours = isOc ? s.h : effectiveHours(s.h, s.actualH)
+    const rate = isOc ? h.ocRate ?? 0 : h.rate ?? 0
     rows.push({
       date,
       source: 'primary',
       hours,
       plannedHours: s.h,
-      hasActual: typeof s.actualH === 'number',
+      hasActual: !isOc && typeof s.actualH === 'number',
       amount: rate * hours,
       label: s.label,
-      oc: !!s.oc,
+      oc: isOc,
     })
   }
-  if (s.ocOverlay && s.ocOverlay.hosp === hospId && s.ocOverlay.h > 0) {
-    const hours = effectiveHours(s.ocOverlay.h, s.ocOverlay.actualH)
+  if (s.ocOverlay && s.ocOverlay.hosp === h.id && s.ocOverlay.h > 0) {
     rows.push({
       date,
       source: 'overlay',
-      hours,
+      hours: s.ocOverlay.h,
       plannedHours: s.ocOverlay.h,
-      hasActual: typeof s.ocOverlay.actualH === 'number',
-      amount: rate * hours,
+      hasActual: false,
+      amount: (h.ocRate ?? 0) * s.ocOverlay.h,
       label: s.ocOverlay.label,
       oc: true,
     })
@@ -170,7 +177,7 @@ export function computePaychecks(
         if (!s || s.hosp === 'OFF' || s.hosp === 'NL') continue
         const payDate = addDays(k, lag)
         if (payDate < from || payDate > horizon) continue
-        const shifts = shiftRowsFor(h.id, h.rate ?? 0, k, s)
+        const shifts = shiftRowsFor(h, k, s)
         if (shifts.length === 0) continue
         result.push({
           payDate,
@@ -194,7 +201,7 @@ export function computePaychecks(
         if (k < periodStart || k > periodEnd) continue
         const s = schedule[k]
         if (!s || s.hosp === 'OFF' || s.hosp === 'NL') continue
-        shifts.push(...shiftRowsFor(h.id, h.rate ?? 0, k, s))
+        shifts.push(...shiftRowsFor(h, k, s))
       }
       shifts.sort((a, b) => a.date.localeCompare(b.date))
       // Emit even zero-amount checks so the pay-date cadence stays visible;

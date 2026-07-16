@@ -23,8 +23,10 @@ export default async function PaychecksPage() {
 
   const now = new Date()
   const today = keyOf(now)
-  // Look back 60 days so late/unverified checks stay visible, forward to Dec 31.
-  const from = keyOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 60))
+  // Whole current year: past checks stay visible for double-checking (even
+  // when their calendar months are archived — archiving only hides the
+  // calendar view, the data is all still here), plus everything upcoming.
+  const from = `${now.getFullYear()}-01-01`
   const yearEnd = `${now.getFullYear()}-12-31`
   const paychecks = computePaychecks(schedule, settings.hospitals, from, yearEnd)
 
@@ -34,7 +36,7 @@ export default async function PaychecksPage() {
         <header className="paychecks-head">
           <Link href="/schedule" className="crumb">← Schedule</Link>
           <h1>Paychecks</h1>
-          <span className="sub">last 60 days + upcoming through Dec 31</span>
+          <span className="sub">all of {now.getFullYear()}</span>
         </header>
 
         <PaychecksClient

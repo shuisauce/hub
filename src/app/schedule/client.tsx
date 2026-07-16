@@ -172,11 +172,22 @@ function makeHospLookup(hospitals: Hospital[]): Record<string, Hospital> {
 const effectiveHours = (s: ShiftEntry): number =>
   typeof s.actualH === 'number' ? s.actualH : s.h
 
+// Money for a day's entry. Regular shifts pay rate × effective hours; OC time
+// (an OC-flagged primary, or the OC overlay riding on a regular shift) pays a
+// flat retainer of ocRate × planned block hours — e.g. HFH's $10/h × 12h =
+// $120. Getting called in during OC is recorded as a regular shift on that
+// day, which pays the normal rate alongside the retainer. OFF/NL pay nothing.
+// OC *money* counts even though OC entries stay excluded from shift/hour
+// counts (isUncountedShift) — on-call isn't worked time.
 function shiftAmount(s: ShiftEntry | undefined, lookup: Record<string, Hospital>): number {
-  if (!s || isUncountedShift(s)) return 0
+  if (!s || s.hosp === 'OFF' || s.hosp === 'NL') return 0
   const h = lookup[s.hosp]
-  if (!h) return 0
-  return h.rate * effectiveHours(s)
+  let total = h ? (s.oc ? (h.ocRate ?? 0) * s.h : h.rate * effectiveHours(s)) : 0
+  const ov = s.ocOverlay
+  if (ov && ov.h > 0) {
+    total += (lookup[ov.hosp]?.ocRate ?? 0) * ov.h
+  }
+  return total
 }
 
 function monthStats(schedule: Schedule, y: number, m: number, lookup: Record<string, Hospital>) {
@@ -185,10 +196,11 @@ function monthStats(schedule: Schedule, y: number, m: number, lookup: Record<str
   let gross = 0
   for (const k in schedule) {
     const p = parseKey(k)
-    if (p.y === y && p.m === m && !isUncountedShift(schedule[k])) {
+    if (p.y !== y || p.m !== m) continue
+    gross += shiftAmount(schedule[k], lookup)
+    if (!isUncountedShift(schedule[k])) {
       shifts++
       hours += effectiveHours(schedule[k])
-      gross += shiftAmount(schedule[k], lookup)
     }
   }
   return { shifts, hours, gross }
@@ -233,9 +245,8 @@ function ytdAdditions(
     if (k <= cutoffKey) continue
     if (k > today) continue
     const s = schedule[k]
-    if (isUncountedShift(s)) continue
     gross += shiftAmount(s, lookup)
-    hours += effectiveHours(s)
+    if (!isUncountedShift(s)) hours += effectiveHours(s)
   }
   return { gross, hours }
 }
@@ -273,13 +284,14 @@ function buildPaceMap(
   const dates = Object.keys(schedule)
     .filter((k) => {
       const p = parseKey(k)
-      return p.y === currentYear && k > today && !isUncountedShift(schedule[k])
+      return p.y === currentYear && k > today
     })
     .sort()
 
   let cum = earnedYTD
   for (const date of dates) {
-    cum += shiftAmount(schedule[date], lookup)
+    cum += shiftAmount(schedule[date], lookup) // OC money accumulates too
+    if (isUncountedShift(schedule[date])) continue // …but only real shifts get a dot
     const p = parseKey(date)
     const start = new Date(p.y, 0, 1).getTime()
     const end = new Date(p.y, 11, 31).getTime()
@@ -780,11 +792,11 @@ function Drawer({
 
   // Walk the year once, collecting all stats we need. Past entries in the
   // schedule are ignored for hour and gross totals — the manual hoursYTD /
-  // earnedYTD baselines cover them, exactly like the money path.
+  // earnedYTD baselines cover them, exactly like the money path. OC money
+  // (shiftAmount handles it) counts toward gross; OC hours never count as
+  // worked time.
   let futureGross = 0
   let futureHours = 0
-  let paidShiftCount = 0
-  let paidShiftGross = 0
   let lastFutureKey: string | null = null
   let futureOffDays = 0
   for (const k in schedule) {
@@ -792,11 +804,9 @@ function Drawer({
     if (p.y !== todayP.y) continue
     const s = schedule[k]
     if (s.hosp === 'OFF' && k > today) futureOffDays++
+    if (k > today) futureGross += shiftAmount(s, lookup)
     if (isUncountedShift(s)) continue
-    paidShiftCount++
-    paidShiftGross += shiftAmount(s, lookup)
     if (k > today) {
-      futureGross += shiftAmount(s, lookup)
       futureHours += effectiveHours(s)
       if (!lastFutureKey || k > lastFutureKey) lastFutureKey = k
     }
@@ -1916,6 +1926,17 @@ function SettingsModal({
                         <label className="add-field">
                           <span className="add-field-lbl">Rate $/h</span>
                           <input className="s-input" type="number" min={0} value={h.rate} onChange={(e) => updateHosp(h.id, { rate: Number(e.target.value) || 0 })} />
+                        </label>
+                        <label className="add-field">
+                          <span className="add-field-lbl">OC $/h</span>
+                          <input
+                            className="s-input"
+                            type="number"
+                            min={0}
+                            value={h.ocRate ?? 0}
+                            title="On-call pay per hour — e.g. $120 per 12h block = 10"
+                            onChange={(e) => updateHosp(h.id, { ocRate: Number(e.target.value) || 0 })}
+                          />
                         </label>
                         <label className="add-field">
                           <span className="add-field-lbl">Pay</span>

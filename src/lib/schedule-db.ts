@@ -7,6 +7,10 @@ export type Hospital = {
   name: string
   short: string
   rate: number
+  /** $/hr paid for on-call hours (both OC-flagged primary shifts and OC
+   *  overlays). E.g. HFH pays $120 per 12h OC block = 10. Default 0 —
+   *  on-call time is unpaid unless configured. */
+  ocRate?: number
   color: string
   pay: 'weekly' | 'biweekly' | 'monthly' | 'per-shift'
   enabled?: boolean
@@ -38,7 +42,12 @@ export type ShiftEntry = {
   h: number
   /** Actual clocked hours (fractional, e.g. 8.25). When set, overrides `h`
    *  for all pay math — paychecks, YTD, projections. Planned `h` stays for
-   *  the calendar display and scheduler exports. */
+   *  the calendar display and scheduler exports.
+   *
+   *  OC entries don't use this: an OC block pays a flat retainer
+   *  (ocRate × block hours, e.g. $10 × 12 = $120). Getting called in is
+   *  recorded by adding a regular shift for the worked hours on that day —
+   *  it pays the normal rate alongside the OC retainer. */
   actualH?: number | null
   label?: string
   oc?: boolean
@@ -92,7 +101,7 @@ export const DEFAULT_SETTINGS: ScheduleSettings = {
   weekStart: 'mon',
   theme: 'system',
   hospitals: [
-    { id: 'HFH', name: 'Henry Ford', short: 'HFH', rate: 233, color: '#7c3aed', pay: 'biweekly', enabled: true },
+    { id: 'HFH', name: 'Henry Ford', short: 'HFH', rate: 233, ocRate: 10, color: '#7c3aed', pay: 'biweekly', enabled: true },
     { id: 'GR', name: 'Garden Park', short: 'GR', rate: 250, color: '#0891b2', pay: 'monthly', enabled: true },
   ],
   hourOptions: [
@@ -318,14 +327,10 @@ export async function setActualHours(
   `) as { data: ShiftEntry }[]
   const entry = rows[0]?.data
   if (!entry) return
-  if (target === 'primary') {
-    if (actualH == null) delete entry.actualH
-    else entry.actualH = actualH
-  } else {
-    if (!entry.ocOverlay) return
-    if (actualH == null) delete entry.ocOverlay.actualH
-    else entry.ocOverlay.actualH = actualH
-  }
+  const obj = target === 'primary' ? entry : entry.ocOverlay
+  if (!obj) return
+  if (actualH == null) delete obj.actualH
+  else obj.actualH = actualH
   await sql`
     UPDATE schedule_entries
     SET data = ${JSON.stringify(entry)}::jsonb, updated_at = now()

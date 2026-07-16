@@ -251,13 +251,22 @@ function CheckRow({
                     <td>{formatDay(s.date)}</td>
                     <td>{s.plannedHours}h</td>
                     <td>
-                      <ActualHoursInput
-                        date={s.date}
-                        source={s.source}
-                        hasActual={s.hasActual}
-                        hours={s.hours}
-                        plannedHours={s.plannedHours}
-                      />
+                      {s.oc ? (
+                        <span
+                          className="pc-flat"
+                          title="OC pays a flat retainer. Got called in? Add a regular shift on that day for the worked hours."
+                        >
+                          flat
+                        </span>
+                      ) : (
+                        <ActualHoursInput
+                          date={s.date}
+                          source={s.source}
+                          hasActual={s.hasActual}
+                          hours={s.hours}
+                          plannedHours={s.plannedHours}
+                        />
+                      )}
                     </td>
                     <td>{s.label ?? ''}{s.oc ? ' · OC' : ''}</td>
                     <td className="right mono">{fmtMoney(s.amount)}</td>
@@ -349,7 +358,7 @@ export function PaychecksClient({
           <div className={'val mono' + (toVerify.length > 0 ? ' attention' : '')}>{toVerify.length}</div>
         </div>
         <div>
-          <div className="lbl">Received (window)</div>
+          <div className="lbl">Received</div>
           <div className="val mono">{fmtMoney(receivedTotal)}</div>
         </div>
       </div>
