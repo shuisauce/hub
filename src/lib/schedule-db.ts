@@ -36,6 +36,10 @@ export type ShiftStatus = 'planned' | 'sent' | 'approved' | 'posted'
 export type ShiftEntry = {
   hosp: string
   h: number
+  /** Actual clocked hours (fractional, e.g. 8.25). When set, overrides `h`
+   *  for all pay math — paychecks, YTD, projections. Planned `h` stays for
+   *  the calendar display and scheduler exports. */
+  actualH?: number | null
   label?: string
   oc?: boolean
   /** Mark that the day has a "no late shift" constraint — afternoon appointment, evening event, etc. */
@@ -44,7 +48,7 @@ export type ShiftEntry = {
   noLateLabel?: string
   /** Approval/posting workflow state. Absent or 'planned' = default. */
   status?: ShiftStatus
-  ocOverlay?: { hosp: string; h: number; label?: string }
+  ocOverlay?: { hosp: string; h: number; label?: string; actualH?: number | null }
 }
 
 export type Schedule = Record<string, ShiftEntry>
@@ -137,6 +141,16 @@ function ensureSchema() {
           ical_token text,
           updated_at timestamptz NOT NULL DEFAULT now(),
           CONSTRAINT schedule_settings_singleton CHECK (id = 1)
+        )
+      `
+      await sql`
+        CREATE TABLE IF NOT EXISTS paycheck_receipts (
+          hosp text NOT NULL,
+          period_end date NOT NULL,
+          received_on date,
+          amount_received double precision,
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (hosp, period_end)
         )
       `
     })().catch((err) => {
@@ -240,4 +254,81 @@ export async function findHospitalsByToken(token: string): Promise<Hospital[] | 
   if (rows.length === 0) return null
   const merged = { ...DEFAULT_SETTINGS, ...rows[0].data } as ScheduleSettings
   return merged.hospitals
+}
+
+// ---------- Paycheck receipts ----------
+
+export type PaycheckReceipt = {
+  hosp: string
+  /** YYYY-MM-DD — the period-end of the predicted check this receipt verifies.
+   *  Stable key even when the actual pay date drifts early/late. */
+  period_end: string
+  /** YYYY-MM-DD the money actually hit the account, or null if only amount recorded. */
+  received_on: string | null
+  amount_received: number | null
+}
+
+export async function listPaycheckReceipts(): Promise<PaycheckReceipt[]> {
+  await ensureSchema()
+  const rows = (await getSql()`
+    SELECT hosp,
+           to_char(period_end, 'YYYY-MM-DD') AS period_end,
+           to_char(received_on, 'YYYY-MM-DD') AS received_on,
+           amount_received
+    FROM paycheck_receipts
+  `) as PaycheckReceipt[]
+  return rows
+}
+
+export async function savePaycheckReceipt(input: {
+  hosp: string
+  periodEnd: string
+  receivedOn: string | null
+  amountReceived: number | null
+}): Promise<void> {
+  await ensureSchema()
+  await getSql()`
+    INSERT INTO paycheck_receipts (hosp, period_end, received_on, amount_received, updated_at)
+    VALUES (${input.hosp}, ${input.periodEnd}::date, ${input.receivedOn}::date, ${input.amountReceived}, now())
+    ON CONFLICT (hosp, period_end) DO UPDATE
+      SET received_on = EXCLUDED.received_on,
+          amount_received = EXCLUDED.amount_received,
+          updated_at = EXCLUDED.updated_at
+  `
+}
+
+export async function deletePaycheckReceipt(hosp: string, periodEnd: string): Promise<void> {
+  await ensureSchema()
+  await getSql()`
+    DELETE FROM paycheck_receipts WHERE hosp = ${hosp} AND period_end = ${periodEnd}::date
+  `
+}
+
+/** Set (or clear, with null) the actual clocked hours on one day's entry.
+ *  `target` picks the primary shift or the OC overlay riding on it. */
+export async function setActualHours(
+  date: string,
+  target: 'primary' | 'overlay',
+  actualH: number | null,
+): Promise<void> {
+  await ensureSchema()
+  const sql = getSql()
+  const rows = (await sql`
+    SELECT data FROM schedule_entries WHERE date = ${date}::date
+  `) as { data: ShiftEntry }[]
+  const entry = rows[0]?.data
+  if (!entry) return
+  if (target === 'primary') {
+    if (actualH == null) delete entry.actualH
+    else entry.actualH = actualH
+  } else {
+    if (!entry.ocOverlay) return
+    if (actualH == null) delete entry.ocOverlay.actualH
+    else entry.ocOverlay.actualH = actualH
+  }
+  await sql`
+    UPDATE schedule_entries
+    SET data = ${JSON.stringify(entry)}::jsonb, updated_at = now()
+    WHERE date = ${date}::date
+  `
 }

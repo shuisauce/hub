@@ -167,11 +167,16 @@ function makeHospLookup(hospitals: Hospital[]): Record<string, Hospital> {
   return out
 }
 
+// Hours that count for money: actual clocked hours when recorded (fractional,
+// entered on the Paychecks page), planned hours otherwise.
+const effectiveHours = (s: ShiftEntry): number =>
+  typeof s.actualH === 'number' ? s.actualH : s.h
+
 function shiftAmount(s: ShiftEntry | undefined, lookup: Record<string, Hospital>): number {
   if (!s || isUncountedShift(s)) return 0
   const h = lookup[s.hosp]
   if (!h) return 0
-  return h.rate * s.h
+  return h.rate * effectiveHours(s)
 }
 
 function monthStats(schedule: Schedule, y: number, m: number, lookup: Record<string, Hospital>) {
@@ -182,7 +187,7 @@ function monthStats(schedule: Schedule, y: number, m: number, lookup: Record<str
     const p = parseKey(k)
     if (p.y === y && p.m === m && !isUncountedShift(schedule[k])) {
       shifts++
-      hours += schedule[k].h
+      hours += effectiveHours(schedule[k])
       gross += shiftAmount(schedule[k], lookup)
     }
   }
@@ -203,7 +208,7 @@ function ytdStats(schedule: Schedule, throughKey: string, lookup: Record<string,
     ) {
       gross += shiftAmount(schedule[k], lookup)
       shifts++
-      hours += schedule[k].h
+      hours += effectiveHours(schedule[k])
     }
   }
   return { gross, shifts, hours }
@@ -230,7 +235,7 @@ function ytdAdditions(
     const s = schedule[k]
     if (isUncountedShift(s)) continue
     gross += shiftAmount(s, lookup)
-    hours += s.h
+    hours += effectiveHours(s)
   }
   return { gross, hours }
 }
@@ -792,7 +797,7 @@ function Drawer({
     paidShiftGross += shiftAmount(s, lookup)
     if (k > today) {
       futureGross += shiftAmount(s, lookup)
-      futureHours += s.h
+      futureHours += effectiveHours(s)
       if (!lastFutureKey || k > lastFutureKey) lastFutureKey = k
     }
   }
