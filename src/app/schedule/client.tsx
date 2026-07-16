@@ -209,6 +209,32 @@ function ytdStats(schedule: Schedule, throughKey: string, lookup: Record<string,
   return { gross, shifts, hours }
 }
 
+// Additions on top of the manual YTD baseline: everything on the calendar
+// scheduled AFTER the "as-of" cutoff and on/before today. Used so a baseline
+// entered weeks ago plus subsequently-worked calendar shifts gives the true
+// current-earned figure.
+function ytdAdditions(
+  schedule: Schedule,
+  cutoffKey: string,
+  today: string,
+  lookup: Record<string, Hospital>,
+): { gross: number; hours: number } {
+  const todayP = parseKey(today)
+  let gross = 0
+  let hours = 0
+  for (const k in schedule) {
+    const p = parseKey(k)
+    if (p.y !== todayP.y) continue
+    if (k <= cutoffKey) continue
+    if (k > today) continue
+    const s = schedule[k]
+    if (isUncountedShift(s)) continue
+    gross += shiftAmount(s, lookup)
+    hours += s.h
+  }
+  return { gross, hours }
+}
+
 function yearScheduledStats(schedule: Schedule, y: number, lookup: Record<string, Hospital>) {
   let gross = 0
   for (const k in schedule) {
@@ -1743,7 +1769,7 @@ function SettingsModal({
 
           <div className="settings-section">
             <h4>Income tracker</h4>
-            <div className="desc">Set what you&rsquo;ve already been paid this year. Future shifts on the calendar add on top of it. The pace dot on each shift shows whether that shift puts you ahead (green) or behind (orange) on its date.</div>
+            <div className="desc">Enter what you&rsquo;ve already been paid <strong>as of</strong> a specific date. Every shift on the calendar dated after that date &mdash; whether already worked or still upcoming &mdash; is added on top automatically. Update the &ldquo;as of&rdquo; date the next time you check your pay stub.</div>
             <div className="settings-row">
               <div className="row-label">
                 <span className="name">Show YTD bar & dashboard</span>
@@ -1752,8 +1778,21 @@ function SettingsModal({
             </div>
             <div className="settings-row">
               <div className="row-label">
-                <span className="name">Earned this year</span>
-                <span className="meta">paid YTD baseline ($)</span>
+                <span className="name">Baseline as of</span>
+                <span className="meta">the date the two baselines below reflect</span>
+              </div>
+              <input
+                className="s-input"
+                type="date"
+                value={settings.ytdAsOf ?? ''}
+                onChange={(e) => setSettings({ ...settings, ytdAsOf: e.target.value || null })}
+                style={{ width: 160 }}
+              />
+            </div>
+            <div className="settings-row">
+              <div className="row-label">
+                <span className="name">Earned baseline</span>
+                <span className="meta">paid $ through &ldquo;as of&rdquo; date</span>
               </div>
               <input
                 className="s-input"
@@ -1767,8 +1806,8 @@ function SettingsModal({
             </div>
             <div className="settings-row">
               <div className="row-label">
-                <span className="name">Hours worked this year</span>
-                <span className="meta">paid YTD baseline (hrs)</span>
+                <span className="name">Hours baseline</span>
+                <span className="meta">paid hrs through &ldquo;as of&rdquo; date</span>
               </div>
               <input
                 className="s-input"
@@ -2009,9 +2048,21 @@ export function ScheduleClient({
     [settings.showPastMonths],
   )
   const lookup = useMemo(() => makeHospLookup(settings.hospitals), [settings.hospitals])
+
+  // Cutoff for "what does the baseline already cover?" — anything ≤ this date
+  // is baked into the manual baselines; anything > this date is picked up from
+  // the calendar. `null` means legacy behavior (baseline = as of today).
+  const ytdCutoff = settings.ytdAsOf || today
+  const additions = useMemo(
+    () => ytdAdditions(schedule, ytdCutoff, today, lookup),
+    [schedule, ytdCutoff, today, lookup],
+  )
+  const earnedThroughToday = settings.earnedYTD + additions.gross
+  const hoursThroughToday = (settings.hoursYTD ?? 0) + additions.hours
+
   const paceMap = useMemo(
-    () => buildPaceMap(schedule, lookup, today, settings.earnedYTD, settings.annualGoal),
-    [schedule, lookup, today, settings.earnedYTD, settings.annualGoal],
+    () => buildPaceMap(schedule, lookup, today, earnedThroughToday, settings.annualGoal),
+    [schedule, lookup, today, earnedThroughToday, settings.annualGoal],
   )
   const scheduleAppRef = useRef<HTMLDivElement | null>(null)
 
@@ -2327,7 +2378,7 @@ export function ScheduleClient({
             onToggle={() => setDrawerOpen((o) => !o)}
             lookup={lookup}
             annualGoal={settings.annualGoal}
-            earnedYTD={settings.earnedYTD}
+            earnedYTD={earnedThroughToday}
           />
         )}
         {settings.showIncome !== false && (
@@ -2336,8 +2387,8 @@ export function ScheduleClient({
             schedule={visibleSchedule}
             lookup={lookup}
             annualGoal={settings.annualGoal}
-            earnedYTD={settings.earnedYTD}
-            hoursYTD={settings.hoursYTD ?? 0}
+            earnedYTD={earnedThroughToday}
+            hoursYTD={hoursThroughToday}
             w2WeeklyHours={settings.w2WeeklyHours ?? 36}
             dayOffRate={settings.dayOffRate ?? 190}
           />

@@ -50,11 +50,16 @@ export type ScheduleSettings = {
   hospitals: Hospital[]
   hourOptions: HourOption[]
   annualGoal: number
-  /** Manually entered "I've earned this much YTD" baseline. */
+  /** Manually entered "I've earned this much" baseline as of `ytdAsOf`. */
   earnedYTD: number
-  /** Manually entered "I've worked this many paid hours YTD" baseline.
-   * Future scheduled hours are added on top of it for the W2 comparison. */
+  /** Manually entered "I've worked this many paid hours" baseline as of `ytdAsOf`. */
   hoursYTD: number
+  /** YYYY-MM-DD. The baseline (earnedYTD + hoursYTD) reflects work done
+   *  through this date. Anything scheduled AFTER this date on the calendar
+   *  adds on top — so past shifts you've already worked and future shifts
+   *  both contribute. `null` means treat the baseline as "as of today,"
+   *  i.e. no past shifts count (legacy default). */
+  ytdAsOf: string | null
   /** Hours per week a comparable full-time W2 would work. Used for the
    * "weeks off vs W2" stat. Default 36. */
   w2WeeklyHours: number
@@ -89,6 +94,7 @@ export const DEFAULT_SETTINGS: ScheduleSettings = {
   annualGoal: 285000,
   earnedYTD: 0,
   hoursYTD: 0,
+  ytdAsOf: null,
   w2WeeklyHours: 36,
   dayOffRate: 190,
   showPastMonths: false,
