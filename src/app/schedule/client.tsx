@@ -623,6 +623,7 @@ type IconName =
   | 'menu' | 'plus' | 'x' | 'chev-down' | 'chev-left' | 'chev-right'
   | 'brush' | 'calendar' | 'sparkles' | 'trash' | 'sun' | 'today'
   | 'download' | 'warn' | 'settings' | 'archive' | 'refresh' | 'edit' | 'copy'
+  | 'dollar'
 
 function Icon({ name, size = 16, stroke = 'currentColor', fill = 'none' }:
   { name: IconName; size?: number; stroke?: string; fill?: string }) {
@@ -650,6 +651,7 @@ function Icon({ name, size = 16, stroke = 'currentColor', fill = 'none' }:
     case 'refresh': return <svg {...props}><path d="M3 12a9 9 0 0115-6.7L21 8M21 3v5h-5M21 12a9 9 0 01-15 6.7L3 16M3 21v-5h5" /></svg>
     case 'edit': return <svg {...props}><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 113 3L7 19l-4 1 1-4z" /></svg>
     case 'copy': return <svg {...props}><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 012-2h10" /></svg>
+    case 'dollar': return <svg {...props}><path d="M12 3v18M17 6H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" /></svg>
     default: return null
   }
 }
@@ -1923,6 +1925,32 @@ function SettingsModal({
                           <span className="add-field-lbl">Color</span>
                           <input className="s-input color-large" type="color" value={h.color} onChange={(e) => updateHosp(h.id, { color: e.target.value })} />
                         </label>
+                        <label className="add-field">
+                          <span className="add-field-lbl">{h.pay === 'per-shift' ? 'Anchor (ignored)' : 'Last period-end'}</span>
+                          <input
+                            className="s-input"
+                            type="date"
+                            value={h.payAnchor ?? ''}
+                            onChange={(e) => updateHosp(h.id, { payAnchor: e.target.value || null })}
+                            disabled={h.pay === 'per-shift'}
+                          />
+                        </label>
+                        <label className="add-field">
+                          <span className="add-field-lbl">{h.pay === 'per-shift' ? 'Days shift → check' : 'Days period-end → check'}</span>
+                          <input
+                            className="s-input"
+                            type="number"
+                            min={0}
+                            step={1}
+                            value={h.payLagDays ?? 0}
+                            onChange={(e) => updateHosp(h.id, { payLagDays: Number(e.target.value) || 0 })}
+                          />
+                        </label>
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6 }}>
+                        {h.pay === 'per-shift'
+                          ? `Each shift becomes its own paycheck ${h.payLagDays ?? 0} day${(h.payLagDays ?? 0) === 1 ? '' : 's'} after it's worked.`
+                          : `${h.pay} cadence, anchored on ${h.payAnchor || '—'}. Every future period is auto-generated from there.`}
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 8 }}>
                         <button
@@ -2048,6 +2076,18 @@ export function ScheduleClient({
     [settings.showPastMonths],
   )
   const lookup = useMemo(() => makeHospLookup(settings.hospitals), [settings.hospitals])
+
+  // Show plain numeric hour buttons first (ascending), then OC entries at the
+  // end. Preserves relative order within each group so custom OC labels stay
+  // in the order the user added them.
+  const sortedHourOptions = useMemo(() => {
+    const plain = settings.hourOptions
+      .filter((o) => typeof o === 'number')
+      .slice()
+      .sort((a, b) => (a as number) - (b as number))
+    const oc = settings.hourOptions.filter((o) => typeof o !== 'number')
+    return [...plain, ...oc]
+  }, [settings.hourOptions])
 
   // Cutoff for "what does the baseline already cover?" — anything ≤ this date
   // is baked into the manual baselines; anything > this date is picked up from
@@ -2352,6 +2392,13 @@ export function ScheduleClient({
           <button className="btn" onClick={() => scrollToToday('smooth')} title="Scroll to today">
             <Icon name="today" size={14} /> Today
           </button>
+          <Link
+            className="btn"
+            href="/schedule/paychecks"
+            title="Upcoming paychecks"
+          >
+            <Icon name="dollar" size={14} /> Checks
+          </Link>
           <button
             className="btn"
             onClick={() => setCsvPickerOpen(true)}
@@ -2398,7 +2445,7 @@ export function ScheduleClient({
           paint={paint}
           setPaint={setPaint}
           hospitals={settings.hospitals}
-          hourOptions={settings.hourOptions}
+          hourOptions={sortedHourOptions}
           onOpenSettings={() => setSettingsOpen(true)}
         />
 
@@ -2422,7 +2469,7 @@ export function ScheduleClient({
             k={popupKey}
             schedule={schedule}
             hospitals={settings.hospitals}
-            hourOptions={settings.hourOptions}
+            hourOptions={sortedHourOptions}
             onSave={handlePopupSave}
             onDelete={handlePopupDelete}
             onClose={() => setPopupKey(null)}

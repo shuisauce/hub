@@ -1,0 +1,255 @@
+.paychecks-app {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+
+  --bg: #fafaf7;
+  --surface: #ffffff;
+  --surface-2: #f5f4f0;
+  --border: #e7e5df;
+  --border-strong: #d6d3cb;
+  --ink: #1c1c1a;
+  --ink-2: #4a4945;
+  --ink-3: #8a887f;
+  --ink-4: #b8b6ad;
+  --accent: #ea580c;
+  --warn: #dc2626;
+  --positive: #16a34a;
+
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), 'Inter', -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+html.dark .paychecks-app {
+  --bg: #15151a;
+  --surface: #1d1d24;
+  --surface-2: #25252e;
+  --border: #2c2c36;
+  --border-strong: #3a3a46;
+  --ink: #f0efeb;
+  --ink-2: #c8c7c0;
+  --ink-3: #898880;
+  --ink-4: #5a5953;
+}
+@media (prefers-color-scheme: dark) {
+  html:not(.light):not(.dark) .paychecks-app {
+    --bg: #15151a;
+    --surface: #1d1d24;
+    --surface-2: #25252e;
+    --border: #2c2c36;
+    --border-strong: #3a3a46;
+    --ink: #f0efeb;
+    --ink-2: #c8c7c0;
+    --ink-3: #898880;
+    --ink-4: #5a5953;
+  }
+}
+
+.paychecks-app .mono {
+  font-family: var(--font-geist-mono), 'JetBrains Mono', ui-monospace, monospace;
+  font-feature-settings: 'tnum' on;
+}
+
+.paychecks-container {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1;
+}
+
+.paychecks-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.paychecks-head h1 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.paychecks-head .crumb {
+  font-size: 13px;
+  color: var(--ink-3);
+  text-decoration: none;
+}
+.paychecks-head .crumb:hover { color: var(--ink); }
+.paychecks-head .sub {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+/* Summary strip */
+.paycheck-summary {
+  display: flex;
+  gap: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px;
+}
+.paycheck-summary .lbl {
+  font-size: 11px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.paycheck-summary .val {
+  font-size: 22px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+/* Warning */
+.paycheck-warning {
+  background: rgba(234, 88, 12, 0.08);
+  border: 1px solid rgba(234, 88, 12, 0.25);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+/* List */
+.paycheck-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.paycheck-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.paycheck-row.zero {
+  opacity: 0.55;
+}
+
+.paycheck-head {
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 12px;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  font-size: 14px;
+}
+.paycheck-head:hover {
+  background: var(--surface-2);
+}
+
+.pc-date {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.pc-day {
+  font-weight: 600;
+  font-size: 15px;
+}
+.pc-when {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.pc-hosp {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.pc-hosp .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+.pc-hosp .short {
+  font-weight: 600;
+}
+.pc-amount {
+  font-size: 16px;
+  font-weight: 700;
+  min-width: 70px;
+  text-align: right;
+}
+.pc-chev {
+  color: var(--ink-3);
+  font-size: 12px;
+  width: 14px;
+  text-align: center;
+}
+
+/* Detail */
+.paycheck-detail {
+  padding: 4px 14px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.pc-period {
+  font-size: 12px;
+  color: var(--ink-3);
+  padding: 8px 0;
+}
+.pc-noshift {
+  font-size: 12px;
+  color: var(--ink-3);
+  padding: 4px 0 8px;
+  font-style: italic;
+}
+.pc-shifts {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.pc-shifts th {
+  text-align: left;
+  color: var(--ink-3);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.pc-shifts th.right,
+.pc-shifts td.right {
+  text-align: right;
+}
+.pc-shifts td {
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--ink-2);
+}
+.pc-shifts tr:last-child td { border-bottom: none; }
+
+/* Empty */
+.paycheck-empty {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 1.6;
+}

@@ -10,6 +10,15 @@ export type Hospital = {
   color: string
   pay: 'weekly' | 'biweekly' | 'monthly' | 'per-shift'
   enabled?: boolean
+  /** YYYY-MM-DD. A known period-end date. Combined with `pay` cadence, this
+   *  drives auto-generation of every future pay period. Ignored for `per-shift`
+   *  hospitals (each shift is its own "period"). Null/undefined = paycheck
+   *  view can't project this hospital yet. */
+  payAnchor?: string | null
+  /** Days from period end to the actual pay date. E.g. period ends Sat, check
+   *  hits the following Fri = 6. For `per-shift`, days between shift date and
+   *  pay date. Default 0. */
+  payLagDays?: number
 }
 
 export type HourOption =
