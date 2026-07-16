@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useMemo, useState, useTransition, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type { Hospital, PaycheckReceipt } from '@/lib/schedule-db'
@@ -280,15 +280,14 @@ function ReceiptForm({
 // ---------- Check row ----------
 
 function CheckRow({
-  p, hosp, today, receipt, defaultOpen,
+  p, hosp, today, receipt,
 }: {
   p: Paycheck
   hosp: Hospital | undefined
   today: string
   receipt: PaycheckReceipt | null
-  defaultOpen?: boolean
 }) {
-  const [open, setOpen] = useState(!!defaultOpen)
+  const [open, setOpen] = useState(false)
   const days = daysBetween(p.payDate, today)
   const daysLabel =
     days === 0 ? 'today' :
@@ -301,30 +300,49 @@ function CheckRow({
   const accuracy = receipt?.amount_received != null ? accuracyLabel(receipt.amount_received, p.amount) : null
   const needsVerify = !receipt && p.payDate < today && p.amount > 0
 
+  const workedCount = p.shifts.filter((s) => !s.oc).length
+  const ocCount = p.shifts.filter((s) => s.oc).length
+  const shiftSummary =
+    p.shifts.length === 0
+      ? 'no shifts'
+      : `${workedCount} shift${workedCount === 1 ? '' : 's'}${ocCount ? ` + ${ocCount} OC` : ''}`
+
+  let badge: ReactNode = null
+  if (receipt) {
+    const ok = (timing?.ok ?? true) && (accuracy?.ok ?? true)
+    const text = accuracy && !accuracy.ok ? accuracy.text : timing && !timing.ok ? timing.text : '✓ received'
+    badge = <span className={'pc-badge ' + (ok ? 'ok' : 'bad')}>{text}</span>
+  } else if (needsVerify) {
+    badge = <span className="pc-badge warn">verify</span>
+  }
+
   return (
-    <li className={'paycheck-row' + (p.amount === 0 ? ' zero' : '')}>
+    <li className={'paycheck-row' + (p.amount === 0 ? ' zero' : '') + (open ? ' open' : '')}>
       <button type="button" onClick={() => setOpen((o) => !o)} className="paycheck-head" aria-expanded={open}>
-        <span className="pc-date">
-          <span className="pc-day">{formatDay(p.payDate)}</span>
-          <span className="pc-when">{daysLabel}</span>
-        </span>
-        <span className="pc-hosp">
-          <span className="dot" style={{ background: hosp?.color ?? '#888' }} />
-          <span className="short">{hosp?.short ?? p.hospitalId}</span>
-          <span className="pc-per">for {compactPeriod(p.periodStart, p.periodEnd)}</span>
-        </span>
-        <span className="pc-flags">
-          {receipt && <span className={'pc-badge ' + ((timing?.ok ?? true) && (accuracy?.ok ?? true) ? 'ok' : 'bad')}>
-            {accuracy && !accuracy.ok ? accuracy.text : timing && !timing.ok ? timing.text : '✓ received'}
-          </span>}
-          {needsVerify && <span className="pc-badge warn">verify</span>}
-        </span>
-        <span className="pc-amount mono">{p.amount === 0 ? '—' : fmtMoneyShort(p.amount)}</span>
         <span className="pc-chev" aria-hidden>{open ? '▾' : '▸'}</span>
+        <span className="pc-main">
+          <span className="pc-line1">
+            <span className="pc-day">{formatDay(p.payDate)}</span>
+            <span className="pc-hosp">
+              <span className="dot" style={{ background: hosp?.color ?? '#888' }} />
+              <span className="short">{hosp?.short ?? p.hospitalId}</span>
+            </span>
+            <span className="pc-when">{daysLabel}</span>
+          </span>
+          <span className="pc-line2">
+            Pay period <b>{compactPeriod(p.periodStart, p.periodEnd)}</b> · {shiftSummary}
+          </span>
+        </span>
+        <span className="pc-right">
+          <span className="pc-amount mono">{p.amount === 0 ? '—' : fmtMoneyShort(p.amount)}</span>
+          {badge}
+        </span>
       </button>
       {open && (
         <div className="paycheck-detail">
-          <div className="pc-period">Period: {formatPeriod(p.periodStart, p.periodEnd)}</div>
+          <div className="pc-period">
+            Pay date <b>{formatDay(p.payDate)}</b> covers {formatPeriod(p.periodStart, p.periodEnd)}
+          </div>
           <TimeCard p={p} hosp={hosp} />
           <ReceiptForm
             hosp={p.hospitalId}
@@ -368,20 +386,25 @@ export function PaychecksClient({
 
   const missing = hospitals.filter((h) => h.enabled !== false && h.pay !== 'per-shift' && !h.payAnchor)
 
-  const toVerify = paychecks.filter(
-    (p) => !receiptLookup[receiptKey(p.hospitalId, p.periodEnd)] && p.payDate < today && p.amount > 0,
+  // One stable, chronological list — earliest pay date at the top, latest at
+  // the bottom. Nothing gets pulled out of order into separate sections.
+  const checks = useMemo(
+    () =>
+      [...paychecks].sort(
+        (a, b) => a.payDate.localeCompare(b.payDate) || a.hospitalId.localeCompare(b.hospitalId),
+      ),
+    [paychecks],
   )
-  const upcoming = paychecks.filter(
-    (p) => !receiptLookup[receiptKey(p.hospitalId, p.periodEnd)] && p.payDate >= today,
-  )
-  // Calendar order, same as the other sections — reconciling against a bank
-  // statement reads top-to-bottom through the year.
-  const received = paychecks.filter((p) => receiptLookup[receiptKey(p.hospitalId, p.periodEnd)])
 
-  const upcomingTotal = upcoming.reduce((s, p) => s + p.amount, 0)
-  const receivedTotal = received.reduce((s, p) => {
+  const toVerifyCount = checks.filter(
+    (p) => !receiptLookup[receiptKey(p.hospitalId, p.periodEnd)] && p.payDate < today && p.amount > 0,
+  ).length
+  const upcomingTotal = checks
+    .filter((p) => !receiptLookup[receiptKey(p.hospitalId, p.periodEnd)] && p.payDate >= today)
+    .reduce((s, p) => s + p.amount, 0)
+  const receivedTotal = checks.reduce((s, p) => {
     const r = receiptLookup[receiptKey(p.hospitalId, p.periodEnd)]
-    return s + (r.amount_received ?? p.amount)
+    return r ? s + (r.amount_received ?? p.amount) : s
   }, 0)
 
   return (
@@ -402,7 +425,7 @@ export function PaychecksClient({
         </div>
         <div>
           <div className="lbl">To verify</div>
-          <div className={'val mono' + (toVerify.length > 0 ? ' attention' : '')}>{toVerify.length}</div>
+          <div className={'val mono' + (toVerifyCount > 0 ? ' attention' : '')}>{toVerifyCount}</div>
         </div>
         <div>
           <div className="lbl">Received</div>
@@ -410,61 +433,23 @@ export function PaychecksClient({
         </div>
       </div>
 
-      {toVerify.length > 0 && (
-        <section>
-          <h2 className="pc-section-title warn">To verify — pay date passed, nothing recorded</h2>
-          <ul className="paycheck-list">
-            {toVerify.map((p, i) => (
-              <CheckRow
-                key={p.hospitalId + p.periodEnd}
-                p={p}
-                hosp={hospLookup[p.hospitalId]}
-                today={today}
-                receipt={null}
-                defaultOpen={i === 0}
-              />
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <section>
-        <h2 className="pc-section-title">Upcoming</h2>
-        {upcoming.length === 0 ? (
-          <div className="paycheck-empty">
-            No upcoming checks. Either you have no shifts scheduled between now and {formatDay(horizon)},
-            or none of your hospitals have a pay-period anchor set.
-          </div>
-        ) : (
-          <ul className="paycheck-list">
-            {upcoming.map((p) => (
-              <CheckRow
-                key={p.hospitalId + p.periodEnd}
-                p={p}
-                hosp={hospLookup[p.hospitalId]}
-                today={today}
-                receipt={null}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {received.length > 0 && (
-        <section>
-          <h2 className="pc-section-title">Received</h2>
-          <ul className="paycheck-list">
-            {received.map((p) => (
-              <CheckRow
-                key={p.hospitalId + p.periodEnd}
-                p={p}
-                hosp={hospLookup[p.hospitalId]}
-                today={today}
-                receipt={receiptLookup[receiptKey(p.hospitalId, p.periodEnd)]}
-              />
-            ))}
-          </ul>
-        </section>
+      {checks.length === 0 ? (
+        <div className="paycheck-empty">
+          No checks yet. Either you have no shifts scheduled this year, or none of your hospitals
+          have a pay-period anchor set.
+        </div>
+      ) : (
+        <ul className="paycheck-list">
+          {checks.map((p) => (
+            <CheckRow
+              key={p.hospitalId + p.periodEnd}
+              p={p}
+              hosp={hospLookup[p.hospitalId]}
+              today={today}
+              receipt={receiptLookup[receiptKey(p.hospitalId, p.periodEnd)] ?? null}
+            />
+          ))}
+        </ul>
       )}
     </div>
   )
