@@ -8,14 +8,16 @@ import {
 } from '@/lib/schedule-db'
 import { requireSession } from '@/lib/session'
 
-export async function saveActualHoursAction(
-  date: string,
-  target: 'primary' | 'overlay',
-  actualH: number | null,
+/** Save a whole check's time card in one go — every row's actual clocked
+ *  hours (null clears back to planned). */
+export async function saveTimeCardAction(
+  entries: Array<{ date: string; target: 'primary' | 'overlay'; actualH: number | null }>,
 ): Promise<void> {
   await requireSession()
-  if (actualH != null && (!Number.isFinite(actualH) || actualH < 0 || actualH > 48)) return
-  await setActualHours(date, target, actualH)
+  for (const e of entries) {
+    if (e.actualH != null && (!Number.isFinite(e.actualH) || e.actualH < 0 || e.actualH > 48)) continue
+    await setActualHours(e.date, e.target, e.actualH)
+  }
   revalidatePath('/schedule/paychecks')
   revalidatePath('/schedule')
 }

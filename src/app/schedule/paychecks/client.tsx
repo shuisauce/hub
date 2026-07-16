@@ -4,11 +4,11 @@ import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type { Hospital, PaycheckReceipt } from '@/lib/schedule-db'
-import type { Paycheck } from '@/lib/paychecks'
-import { saveActualHoursAction, saveReceiptAction, clearReceiptAction } from './actions'
+import type { Paycheck, PaycheckShift } from '@/lib/paychecks'
+import { saveTimeCardAction, saveReceiptAction, clearReceiptAction } from './actions'
 
 const fmtMoney = (n: number) =>
-  '$' + n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+  '$' + n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })
 const fmtMoneyShort = (n: number) =>
   n >= 1000 ? '$' + (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : '$' + Math.round(n)
 
@@ -49,51 +49,130 @@ function accuracyLabel(received: number, expected: number): { text: string; ok: 
     : { text: `over by ${fmtMoney(delta)}`, ok: false }
 }
 
-// ---------- Actual-hours input ----------
+// ---------- Time card (save feature #1) ----------
 
-function ActualHoursInput({
-  date, source, hasActual, hours, plannedHours,
-}: {
-  date: string
-  source: 'primary' | 'overlay'
-  hasActual: boolean
-  hours: number
-  plannedHours: number
-}) {
+const rowKey = (s: PaycheckShift) => `${s.date}|${s.source}`
+const savedStr = (s: PaycheckShift) => (s.hasActual ? String(s.hours) : '')
+
+function TimeCard({ p, hosp }: { p: Paycheck; hosp: Hospital | undefined }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
+  const [draft, setDraft] = useState<Record<string, string>>(() =>
+    Object.fromEntries(p.shifts.filter((s) => !s.oc).map((s) => [rowKey(s), savedStr(s)])),
+  )
 
-  function commit(raw: string) {
-    const trimmed = raw.trim()
-    const parsed = trimmed === '' ? null : Number(trimmed)
-    if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) return
-    // No-op when nothing changed (avoids a server round-trip per blur)
-    if (parsed === null && !hasActual) return
-    if (parsed !== null && hasActual && Math.abs(parsed - hours) < 0.001) return
+  const rate = hosp?.rate ?? 0
+
+  // Walk the rows once: validate drafts, detect unsaved edits, and build the
+  // live preliminary total (time-card hours where entered, planned otherwise).
+  let invalid = false
+  let dirty = false
+  let preliminary = 0
+  for (const s of p.shifts) {
+    if (s.oc) { preliminary += s.amount; continue }
+    const raw = (draft[rowKey(s)] ?? savedStr(s)).trim()
+    const num = raw === '' ? null : Number(raw)
+    if (num !== null && (!Number.isFinite(num) || num < 0)) { invalid = true; continue }
+    const savedNum = s.hasActual ? s.hours : null
+    if ((num === null) !== (savedNum === null) || (num !== null && savedNum !== null && Math.abs(num - savedNum) > 0.001)) {
+      dirty = true
+    }
+    preliminary += rate * (num ?? s.plannedHours)
+  }
+
+  function save() {
+    const entries = p.shifts
+      .filter((s) => !s.oc)
+      .map((s) => {
+        const raw = (draft[rowKey(s)] ?? savedStr(s)).trim()
+        return { date: s.date, target: s.source, actualH: raw === '' ? null : Number(raw) }
+      })
     startTransition(async () => {
-      await saveActualHoursAction(date, source, parsed)
+      await saveTimeCardAction(entries)
       router.refresh()
     })
   }
 
   return (
-    <input
-      key={`${date}-${source}-${hasActual ? hours : ''}`}
-      className={'pc-actual-input' + (pending ? ' saving' : '')}
-      type="number"
-      inputMode="decimal"
-      min={0}
-      step={0.25}
-      defaultValue={hasActual ? hours : ''}
-      placeholder={String(plannedHours)}
-      title="Actual clocked hours — blank uses the planned hours"
-      onBlur={(e) => commit(e.target.value)}
-      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-    />
+    <div className="pc-timecard">
+      {p.shifts.length === 0 ? (
+        <div className="pc-noshift">No shifts in this period.</div>
+      ) : (
+        <>
+          <table className="pc-shifts">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Planned</th>
+                <th>Time card</th>
+                <th>Note</th>
+                <th className="right">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {p.shifts.map((s) => {
+                const k = rowKey(s)
+                const raw = s.oc ? '' : (draft[k] ?? savedStr(s))
+                const num = raw.trim() === '' ? null : Number(raw)
+                const rowAmount = s.oc
+                  ? s.amount
+                  : Number.isFinite(num ?? 0) ? rate * ((num ?? s.plannedHours)) : NaN
+                return (
+                  <tr key={k}>
+                    <td>{formatDay(s.date)}</td>
+                    <td>{s.plannedHours}h</td>
+                    <td>
+                      {s.oc ? (
+                        <span
+                          className="pc-flat"
+                          title="OC pays a flat retainer. Got called in? Add a regular shift on that day for the worked hours."
+                        >
+                          flat
+                        </span>
+                      ) : (
+                        <input
+                          className="pc-actual-input"
+                          type="number"
+                          inputMode="decimal"
+                          min={0}
+                          step={0.25}
+                          value={raw}
+                          placeholder={String(s.plannedHours)}
+                          title="Hours actually worked per your time card — blank uses the planned hours"
+                          onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                        />
+                      )}
+                    </td>
+                    <td>{s.label ?? ''}{s.oc ? ' · OC' : ''}</td>
+                    <td className="right mono">{Number.isNaN(rowAmount) ? '—' : fmtMoney(rowAmount)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          <div className="pc-timecard-foot">
+            <span className="pc-prelim">
+              Preliminary total:{' '}
+              <b className="mono">{invalid ? '—' : fmtMoney(preliminary)}</b>
+              {dirty && !invalid && <em className="pc-unsaved"> · unsaved</em>}
+            </span>
+            <button
+              type="button"
+              className="pc-btn primary"
+              onClick={save}
+              disabled={pending || !dirty || invalid}
+            >
+              {pending ? 'Saving…' : 'Save time card'}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
-// ---------- Receipt form ----------
+// ---------- Bank record (save feature #2) ----------
 
 function ReceiptForm({
   hosp, periodEnd, payDate, expected, receipt,
@@ -128,7 +207,7 @@ function ReceiptForm({
   }
 
   function clear() {
-    if (!window.confirm('Clear this receipt record?')) return
+    if (!window.confirm('Clear this bank record?')) return
     startTransition(async () => {
       await clearReceiptAction(hosp, periodEnd)
       setReceivedOn('')
@@ -143,6 +222,9 @@ function ReceiptForm({
   return (
     <div className="pc-receipt">
       <div className="pc-receipt-title">Bank</div>
+      <div className="pc-expected">
+        Expected from time card: <b className="mono">{fmtMoney(expected)}</b>
+      </div>
       <div className="pc-receipt-grid">
         <label>
           <span>Money hit on</span>
@@ -159,14 +241,14 @@ function ReceiptForm({
             inputMode="decimal"
             step={0.01}
             min={0}
-            placeholder={expected > 0 ? String(Math.round(expected)) : '0'}
+            placeholder={expected > 0 ? expected.toFixed(2) : '0'}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
         </label>
         <div className="pc-receipt-actions">
           <button type="button" className="pc-btn primary" onClick={save} disabled={pending || !dirty}>
-            {pending ? 'Saving…' : 'Save'}
+            {pending ? 'Saving…' : 'Save bank record'}
           </button>
           {receipt && (
             <button type="button" className="pc-btn" onClick={clear} disabled={pending}>
@@ -232,49 +314,7 @@ function CheckRow({
       {open && (
         <div className="paycheck-detail">
           <div className="pc-period">Period: {formatPeriod(p.periodStart, p.periodEnd)}</div>
-          {p.shifts.length === 0 ? (
-            <div className="pc-noshift">No shifts in this period.</div>
-          ) : (
-            <table className="pc-shifts">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Planned</th>
-                  <th>Actual</th>
-                  <th>Note</th>
-                  <th className="right">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {p.shifts.map((s, si) => (
-                  <tr key={si}>
-                    <td>{formatDay(s.date)}</td>
-                    <td>{s.plannedHours}h</td>
-                    <td>
-                      {s.oc ? (
-                        <span
-                          className="pc-flat"
-                          title="OC pays a flat retainer. Got called in? Add a regular shift on that day for the worked hours."
-                        >
-                          flat
-                        </span>
-                      ) : (
-                        <ActualHoursInput
-                          date={s.date}
-                          source={s.source}
-                          hasActual={s.hasActual}
-                          hours={s.hours}
-                          plannedHours={s.plannedHours}
-                        />
-                      )}
-                    </td>
-                    <td>{s.label ?? ''}{s.oc ? ' · OC' : ''}</td>
-                    <td className="right mono">{fmtMoney(s.amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          <TimeCard p={p} hosp={hosp} />
           <ReceiptForm
             hosp={p.hospitalId}
             periodEnd={p.periodEnd}
@@ -351,7 +391,7 @@ export function PaychecksClient({
       <div className="paycheck-summary">
         <div>
           <div className="lbl">Upcoming through {formatDay(horizon)}</div>
-          <div className="val mono">{fmtMoney(upcomingTotal)}</div>
+          <div className="val mono">{fmtMoney(Math.round(upcomingTotal))}</div>
         </div>
         <div>
           <div className="lbl">To verify</div>
@@ -359,7 +399,7 @@ export function PaychecksClient({
         </div>
         <div>
           <div className="lbl">Received</div>
-          <div className="val mono">{fmtMoney(receivedTotal)}</div>
+          <div className="val mono">{fmtMoney(Math.round(receivedTotal))}</div>
         </div>
       </div>
 

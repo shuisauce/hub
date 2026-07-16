@@ -308,6 +308,41 @@ html.dark .paychecks-app {
   cursor: help;
 }
 
+/* Time card footer — preliminary total + save */
+.pc-timecard-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.pc-prelim {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.pc-prelim b {
+  font-size: 15px;
+  color: var(--ink);
+}
+.pc-unsaved {
+  font-size: 12px;
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 600;
+}
+
+/* Expected line in the bank section */
+.pc-expected {
+  font-size: 13px;
+  color: var(--ink-2);
+  margin-bottom: 10px;
+}
+.pc-expected b {
+  font-size: 14px;
+  color: var(--ink);
+}
+
 /* Receipt form */
 .pc-receipt {
   margin-top: 12px;
