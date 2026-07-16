@@ -186,6 +186,11 @@ html.dark .paychecks-app {
 .pc-hosp .short {
   font-weight: 600;
 }
+.pc-per {
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
 .pc-amount {
   font-size: 16px;
   font-weight: 700;

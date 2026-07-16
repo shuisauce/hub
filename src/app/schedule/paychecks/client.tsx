@@ -22,6 +22,16 @@ function formatPeriod(start: string, end: string): string {
   return `${formatDay(start)} – ${formatDay(end)}`
 }
 
+// Short period label for collapsed rows: "May 3–16" or "May 31 – Jun 13".
+function compactPeriod(start: string, end: string): string {
+  const [, m1, d1] = start.split('-').map(Number)
+  const [, m2, d2] = end.split('-').map(Number)
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  if (start === end) return `${months[m1 - 1]} ${d1}`
+  if (m1 === m2) return `${months[m1 - 1]} ${d1}–${d2}`
+  return `${months[m1 - 1]} ${d1} – ${months[m2 - 1]} ${d2}`
+}
+
 function daysBetween(a: string, b: string): number {
   const [y1, m1, d1] = a.split('-').map(Number)
   const [y2, m2, d2] = b.split('-').map(Number)
@@ -301,6 +311,7 @@ function CheckRow({
         <span className="pc-hosp">
           <span className="dot" style={{ background: hosp?.color ?? '#888' }} />
           <span className="short">{hosp?.short ?? p.hospitalId}</span>
+          <span className="pc-per">for {compactPeriod(p.periodStart, p.periodEnd)}</span>
         </span>
         <span className="pc-flags">
           {receipt && <span className={'pc-badge ' + ((timing?.ok ?? true) && (accuracy?.ok ?? true) ? 'ok' : 'bad')}>
@@ -363,13 +374,9 @@ export function PaychecksClient({
   const upcoming = paychecks.filter(
     (p) => !receiptLookup[receiptKey(p.hospitalId, p.periodEnd)] && p.payDate >= today,
   )
-  const received = paychecks
-    .filter((p) => receiptLookup[receiptKey(p.hospitalId, p.periodEnd)])
-    .sort((a, b) => {
-      const ra = receiptLookup[receiptKey(a.hospitalId, a.periodEnd)]
-      const rb = receiptLookup[receiptKey(b.hospitalId, b.periodEnd)]
-      return (rb.received_on ?? b.payDate).localeCompare(ra.received_on ?? a.payDate)
-    })
+  // Calendar order, same as the other sections — reconciling against a bank
+  // statement reads top-to-bottom through the year.
+  const received = paychecks.filter((p) => receiptLookup[receiptKey(p.hospitalId, p.periodEnd)])
 
   const upcomingTotal = upcoming.reduce((s, p) => s + p.amount, 0)
   const receivedTotal = received.reduce((s, p) => {
