@@ -388,12 +388,17 @@ export function PaychecksClient({
 
   // One stable, chronological list — earliest pay date at the top, latest at
   // the bottom. Nothing gets pulled out of order into separate sections.
+  // Hide pay periods with no income (no shifts fell in them), but keep any
+  // check you've already recorded a bank deposit for so nothing you entered
+  // silently disappears.
   const checks = useMemo(
     () =>
-      [...paychecks].sort(
-        (a, b) => a.payDate.localeCompare(b.payDate) || a.hospitalId.localeCompare(b.hospitalId),
-      ),
-    [paychecks],
+      [...paychecks]
+        .filter((p) => p.amount > 0 || receiptLookup[receiptKey(p.hospitalId, p.periodEnd)])
+        .sort(
+          (a, b) => a.payDate.localeCompare(b.payDate) || a.hospitalId.localeCompare(b.hospitalId),
+        ),
+    [paychecks, receiptLookup],
   )
 
   const toVerifyCount = checks.filter(

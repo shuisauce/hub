@@ -19,7 +19,9 @@ import {
   type ScheduleSettings,
   type ShiftEntry,
   type ShiftStatus,
+  type PaycheckReceipt,
 } from '@/lib/schedule-db'
+import { computePaychecks } from '@/lib/paychecks'
 import {
   clearMonthAction,
   saveSettingsAction,
@@ -2076,10 +2078,12 @@ export function ScheduleClient({
   initialSchedule,
   initialSettings,
   icalToken,
+  initialReceipts,
 }: {
   initialSchedule: Schedule
   initialSettings: ScheduleSettings
   icalToken: string
+  initialReceipts: PaycheckReceipt[]
 }) {
   const [schedule, setScheduleState] = useState<Schedule>(initialSchedule)
   const [settings, setSettingsState] = useState<ScheduleSettings>(initialSettings)
@@ -2123,7 +2127,25 @@ export function ScheduleClient({
     () => ytdAdditions(schedule, ytdCutoff, today, lookup),
     [schedule, ytdCutoff, today, lookup],
   )
-  const earnedThroughToday = settings.earnedYTD + additions.gross
+
+  // Reconciliation: where a past paycheck has an actual bank deposit recorded
+  // on the Paychecks tab, that deposit is the truth — not the predicted amount.
+  // We only adjust checks whose whole pay period falls AFTER the baseline
+  // cutoff (so they're counted in `additions`, never in the manual baseline),
+  // and only up through today (already paid). The delta swaps predicted → actual.
+  const reconDelta = useMemo(() => {
+    const yearStart = `${parseKey(today).y}-01-01`
+    const byKey = new Map(initialReceipts.map((r) => [`${r.hosp}|${r.period_end}`, r]))
+    let delta = 0
+    for (const p of computePaychecks(schedule, settings.hospitals, yearStart, today)) {
+      if (p.periodStart <= ytdCutoff) continue // already baked into the baseline
+      const r = byKey.get(`${p.hospitalId}|${p.periodEnd}`)
+      if (r && r.amount_received != null) delta += r.amount_received - p.amount
+    }
+    return delta
+  }, [schedule, settings.hospitals, initialReceipts, ytdCutoff, today])
+
+  const earnedThroughToday = settings.earnedYTD + additions.gross + reconDelta
   const hoursThroughToday = (settings.hoursYTD ?? 0) + additions.hours
 
   const paceMap = useMemo(
